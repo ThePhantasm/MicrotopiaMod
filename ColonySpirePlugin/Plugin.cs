@@ -51,7 +51,16 @@ namespace ColonySpireMod
                 typeof(LarvaRateHudPatch),
                 // Phase 12: Energy Efficiency
                 typeof(EnergyDrainPatch),
+                // Island Scale
+                typeof(GroundInitShapePatch),
+                typeof(GroundCreatePatch),
+                typeof(UISettingsWorldPatch),
+                typeof(UIWorldSettingsInitPatch),
             };
+            
+            // Load settings early so scale defaults are ready
+            ModSave.Load();
+
             foreach (var t in patchClasses)
             {
                 try { harmony.CreateClassProcessor(t).Patch(); Logger.LogInfo($"[OK] {t.Name}"); }
@@ -75,6 +84,7 @@ namespace ColonySpireMod
         public static int sentinelHatched = 0;  // Track 6: total sentinels ever hatched
         public static int energyLevel = 0;      // Track 7: Energy efficiency
         public static int displayTier = 1;
+        public static float islandScale = 1.0f; // Scale modifier for the first island
         public static ConditionalWeakTable<Queen, QueenData> queenData = new();
         public static QueenData GetQueen(Queen q) => queenData.GetOrCreateValue(q);
 
@@ -185,6 +195,12 @@ namespace ColonySpireMod
         const string KEY_QUEENTIER  = "CSP_QueenTier";
         const string KEY_ENERGY     = "CSP_Energy";
         const string KEY_SPIRE_TRACK = "CSP_SpireTrack";  // selected upgrade track
+        const string KEY_ISLAND_SCALE = "CSP_IslandScale";
+
+        public static void SaveSettings() {
+            PlayerPrefs.SetFloat(KEY_ISLAND_SCALE, ModState.islandScale);
+            PlayerPrefs.Save();
+        }
 
         public static void SaveSpireTrack(int trackIdx) {
             PlayerPrefs.SetInt(KEY_SPIRE_TRACK, trackIdx);
@@ -215,7 +231,8 @@ namespace ColonySpireMod
             ModState.wingLevel         = PlayerPrefs.GetInt(KEY_WINGS,    0);
             ModState.sentinelHatched   = PlayerPrefs.GetInt(KEY_SENTINEL, 0);
             ModState.energyLevel       = PlayerPrefs.GetInt(KEY_ENERGY,   0);
-            Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel}");
+            ModState.islandScale       = PlayerPrefs.GetFloat(KEY_ISLAND_SCALE, 1.0f);
+            Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} Scale={ModState.islandScale}");
         }
 
         public static int LoadQueenTier() => PlayerPrefs.GetInt(KEY_QUEENTIER, 1);
@@ -666,6 +683,137 @@ namespace ColonySpireMod
                     lbUnit.text = "/min";
             } catch (Exception ex) {
                 Debug.Log($"[Spire] LarvaRateHud: {ex.Message}");
+            }
+        }
+    }
+
+    // ================================================================
+    // INITIAL ISLAND SCALE OVERRIDE
+    // ================================================================
+    [HarmonyPatch(typeof(Ground), "InitShape")]
+    public static class GroundInitShapePatch {
+        static float[] origRadii;
+        static Vector3[] origCenters;
+        
+        [HarmonyPrefix]
+        static void Prefix(Ground __instance) {
+            if (GameManager.instance == null) return;
+            // Only apply scale if it's the very first ground (initial island)
+            if (GameManager.instance.GetGroundCount() == 0 && ModState.islandScale != 1.0f) {
+                var stField = AccessTools.Field(typeof(Ground), "shapeTransform");
+                if (stField == null) return;
+                var shapeTransform = stField.GetValue(__instance) as Transform;
+                if (shapeTransform == null) return;
+
+                var colliders = shapeTransform.GetComponents<SphereCollider>();
+                origRadii = new float[colliders.Length];
+                origCenters = new Vector3[colliders.Length];
+                for (int i=0; i < colliders.Length; i++) {
+                    origRadii[i] = colliders[i].radius;
+                    origCenters[i] = colliders[i].center;
+                    colliders[i].radius *= ModState.islandScale;
+                    colliders[i].center *= ModState.islandScale;
+                }
+            }
+        }
+        
+        [HarmonyPostfix]
+        static void Postfix(Ground __instance) {
+            // Restore colliders immediately so prefab is left intact
+            if (origRadii != null) {
+                var stField = AccessTools.Field(typeof(Ground), "shapeTransform");
+                var shapeTransform = stField?.GetValue(__instance) as Transform;
+                if (shapeTransform != null) {
+                    var colliders = shapeTransform.GetComponents<SphereCollider>();
+                    for (int i=0; i < colliders.Length; i++) {
+                        colliders[i].radius = origRadii[i];
+                        colliders[i].center = origCenters[i];
+                    }
+                }
+                origRadii = null;
+                origCenters = null;
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Ground), "Create")]
+    public static class GroundCreatePatch {
+        [HarmonyPostfix]
+        static void Postfix(Ground __result) {
+            // Target the cloned instance for the local scale
+            if (__result != null && GameManager.instance != null && GameManager.instance.GetGroundCount() == 0) {
+                __result.transform.localScale = Vector3.one * ModState.islandScale;
+                Debug.Log($"[Spire] Scaled initial island to {ModState.islandScale}");
+            }
+        }
+    }
+
+    // ================================================================
+    // SETTINGS MENU INJECTION (Adds slider to UI)
+    // ================================================================
+    [HarmonyPatch(typeof(UISettings), "AddWorldSettings")]
+    public static class UISettingsWorldPatch {
+        [HarmonyPostfix]
+        static void Postfix(UISettings __instance) {
+            try {
+                var addSettingMethod = AccessTools.Method(typeof(UISettings), "AddSetting");
+                if (addSettingMethod == null) return;
+                
+                var blankSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                var sliderSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                
+                SetupSlider(blankSetting, sliderSetting);
+            } catch (Exception ex) {
+                Debug.Log($"[Spire] UISettings exception: {ex.Message}");
+            }
+        }
+
+        public static void SetupSlider(UISettings_Setting blankSetting, UISettings_Setting sliderSetting) {
+            if (blankSetting != null) blankSetting.InitEmpty();
+            if (sliderSetting != null) {
+                sliderSetting.InitSlider("Initial Island Scale", 0.5f, 1f, 
+                    () => ModState.islandScale, 
+                    (float v) => {
+                        // Snap to nearest 5% (0.05 increments)
+                        float snapped = Mathf.Round(v * 20f) / 20f;
+                        ModState.islandScale = snapped;
+                        ModSave.SaveSettings();
+                        
+                        // Override the percentage text label to show the snapped %
+                        var valueAfterField = AccessTools.Field(typeof(UISettings_Setting), "valueAfter");
+                        if (valueAfterField != null) {
+                            var valueAfter = valueAfterField.GetValue(sliderSetting) as UITextImageButton;
+                            if (valueAfter != null) {
+                                valueAfter.SetText($"{Mathf.Round(snapped * 100f)}%");
+                            }
+                        }
+                    }
+                );
+                
+                // Override the header directly to avoid missing Loc keys
+                var headerField = AccessTools.Field(typeof(UISettings_Setting), "headerText");
+                if (headerField != null) {
+                    var textObj = headerField.GetValue(sliderSetting) as TMPro.TextMeshProUGUI;
+                    if (textObj != null) textObj.text = "Initial Island Scale";
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(UIWorldSettings), "Init")]
+    public static class UIWorldSettingsInitPatch {
+        [HarmonyPostfix]
+        static void Postfix(UIWorldSettings __instance) {
+            try {
+                var addSettingMethod = AccessTools.Method(typeof(UIWorldSettings), "AddSetting");
+                if (addSettingMethod == null) return;
+                
+                var blankSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                var sliderSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                
+                UISettingsWorldPatch.SetupSlider(blankSetting, sliderSetting);
+            } catch (Exception ex) {
+                Debug.Log($"[Spire] UIWorldSettings exception: {ex.Message}");
             }
         }
     }

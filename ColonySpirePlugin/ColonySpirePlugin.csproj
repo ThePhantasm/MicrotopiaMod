@@ -46,6 +46,10 @@
       <HintPath>$(GameDir)\Microtopia_Data\Managed\Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(GameDir)\Microtopia_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>$(GameDir)\Microtopia_Data\Managed\UnityEngine.UI.dll</HintPath>
       <Private>false</Private>
