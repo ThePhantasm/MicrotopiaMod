@@ -1,0 +1,58 @@
+# 🐜 Microtopia – Colony Spire & Phase 12 Logistics Mod
+
+## Overview
+
+This is a massive gameplay overhaul mod for Microtopia that introduces deep endgame progression through the **Colony Spire** (repurposing the Radar Tower). It shifts late-game focus towards generating prestige, managing specialized logistics, and assembling the ultimate colony!
+
+### Major Features
+- **Queen Tiers:** Select your Queen and press **G** (or use the UI button) to instantly cycle her output between T1, T2, and T3 larvae. No more waiting on early-game Combiners!
+- **The Colony Spire:** The Radar Tower is now the core progression mechanic. Insert scaling resources to level up your entire colony across 7 different tracks:
+  1. **Speed:** Pheromone trail speed bonuses.
+  2. **Queen:** Royal mandate bonuses.
+  3. **Mine:** Deep mining efficiency (gather faster).
+  4. **Mold:** Carapace resistance against mold and disease.
+  5. **Wings:** Increased carry capacity for flying units.
+  6. **Sentinel:** Direct insertion of materials to hatch ultimate defending Sentinels.
+  7. **Energy:** Massive max-energy limits so ants gather longer before starving.
+- **Phase 12 T2 Miners:** Base digger ants falling behind? Assemble the new **T2 Small Digger** and **T2 Large Digger** in your Assemblers using T2 larvae! They mine 50% faster and have expanded health pools.
+- **Prestige System:** Launching Gynes now grants permanent prestige stars that act as a multiplier for colony power.
+
+---
+
+## 🛠️ Installation Guide
+
+This mod requires **BepInEx** to run. 
+
+### Prerequisites
+1. **Install BepInEx:** Download the standard `x64` version of BepInEx for your OS and extract it directly into your Microtopia game directory (next to `Microtopia.exe`). Run the game once to generate the `BepInEx/plugins` folder before proceeding.
+2. **.NET SDK:** Ensure you have a recent .NET SDK installed on your PC, as this mod compiles its plugin dynamically during installation to match your framework.
+
+### Installing the Mod
+1. Download this entire repository.
+2. Inside your Microtopia game directory, create a folder called `Mods` if it doesn't already exist.
+3. Place the downloaded repository folder into the `Mods` folder (e.g. `Microtopia/Mods/QueenTierMod`).
+4. Open a PowerShell terminal.
+5. Navigate to the mod folder and run the install script:
+   ```powershell
+   cd d:\path\to\SteamLibrary\steamapps\common\Microtopia\Mods\QueenTierMod
+   .\install.ps1
+   ```
+   *Note: If you get a PowerShell Execution Policy error, run this instead:*
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install.ps1
+   ```
+
+### What the Script Does
+The installer does all the heavy lifting for you automatically:
+1. It creates a seamless `.backup` of your game's data sheets (`prefabs.fods`).
+2. It compiles the C# BepInEx `.dll` plugin directly from the source code and drops it into your `BepInEx/plugins` folder.
+3. It splices the new T2 Miner factory recipes and custom assets directly into your `prefabs.fods` data sheet.
+
+### To Uninstall
+To safely remove the mod, remove the `.dll` from `BepInEx/plugins/ColonySpirePlugin.dll` and restore your `prefabs.fods` via Steam's "Verify Integrity of Game Files" feature.
+
+---
+
+## Technical Notes
+- **Save Compatibility:** Mod State (Prestige level, Spire upgrades, Queen tiers) is safely saved natively using Unity's `PlayerPrefs` and will persist exactly as you left it across your saves.
+- **Dynamic Hooking:** All C# logic acts at runtime using Harmony IL patches, meaning base game methods are carefully wrapped rather than destroyed!
