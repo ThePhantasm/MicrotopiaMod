@@ -988,10 +988,8 @@ namespace ColonySpireMod
                 
                 var blankSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
                 var sliderSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
-                var colorSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
                 
                 SetupSlider(blankSetting, sliderSetting);
-                SetupColorDropdown(colorSetting);
 
                 // Feature toggles section
                 var blankSetting2 = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
@@ -1052,33 +1050,6 @@ namespace ColonySpireMod
             }
         }
 
-        public static void SetupColorDropdown(UISettings_Setting colorSetting) {
-            if (colorSetting == null) return;
-            try {
-                colorSetting.InitDropdown(
-                    "Main Bus Trail Color",  // header — will be overridden below
-                    (List<string> items) => {
-                        // Populate dropdown with all available color names
-                        foreach (var (name, _, _) in ModState.MainBusColors)
-                            items.Add(name);
-                    },
-                    () => ModState.mainBusColorIndex,  // getter: current index
-                    (int index) => {                    // setter: on selection changed
-                        ModState.mainBusColorIndex = Math.Max(0, Math.Min(index, ModState.MainBusColors.Length - 1));
-                        ModSave.SaveMainBusColor();
-                        // Only new trails get the new color — existing trails keep theirs
-                        Debug.Log($"[Spire] Main Bus color -> {ModState.GetMainBusColor().name} (index {ModState.mainBusColorIndex})");
-                    }
-                );
-                // Override the header text directly (the Loc key won't exist)
-                var headerField = AccessTools.Field(typeof(UISettings_Setting), "headerText");
-                if (headerField != null) {
-                    var textObj = headerField.GetValue(colorSetting) as TMPro.TextMeshProUGUI;
-                    if (textObj != null) textObj.text = "Main Bus Trail Color";
-                }
-            } catch (Exception ex) { Debug.Log($"[Spire] ColorDropdown: {ex.Message}"); }
-        }
-
         public static void SetupFeatureToggle(object settingsInstance, MethodInfo addSettingMethod,
             string title, string description, Func<bool> getter, Action<bool> setter) {
             try {
@@ -1108,10 +1079,8 @@ namespace ColonySpireMod
                 
                 var blankSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
                 var sliderSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
-                var colorSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
                 
                 UISettingsWorldPatch.SetupSlider(blankSetting, sliderSetting);
-                UISettingsWorldPatch.SetupColorDropdown(colorSetting);
             } catch (Exception ex) {
                 Debug.Log($"[Spire] UIWorldSettings exception: {ex.Message}");
             }
