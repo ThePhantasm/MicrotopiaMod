@@ -1,0 +1,20 @@
+public enum Achievement
+{
+	None,
+	DESERT,
+	JUNGLE,
+	TOXIC,
+	CONCRETE,
+	POP_100,
+	POP_500,
+	GYNE_T1,
+	GYNE_T2,
+	GYNE_T3,
+	GYNE_50,
+	THUMPER,
+	PUFFER,
+	LOGIC_GATES,
+	LAND_QUEEN,
+	FIRST_NUPTIAL,
+	SPEED_50
+}

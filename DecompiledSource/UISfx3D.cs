@@ -1,0 +1,20 @@
+public enum UISfx3D
+{
+	None,
+	AntSelect,
+	BuildingSelect,
+	BiomeObjectSelect,
+	TrailActionPointAppear,
+	TrailActionPointDisappear,
+	TrailPlace,
+	TrailPlaceClosed,
+	TrailDelete,
+	TrailDrawing,
+	TrailObstructed,
+	BuildingRotate,
+	BuildingPlace,
+	BuildingDelete,
+	BuildingComplete,
+	CopySettings,
+	PasteSettings
+}

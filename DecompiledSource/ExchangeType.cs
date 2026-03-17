@@ -1,0 +1,26 @@
+public enum ExchangeType
+{
+	NONE = 0,
+	ANY = 1,
+	OWNER = 2,
+	INSERT = 3,
+	EXTRACT = 4,
+	BUILDING_IN = 5,
+	BUILDING_OUT = 6,
+	BUILDING_PROCESS = 7,
+	DROP = 11,
+	PICKUP = 12,
+	FORAGE = 13,
+	PLANT_CUT = 14,
+	MINE = 15,
+	PICKUP_CORPSE = 16,
+	DROP_BEHIND = 17,
+	EXTRACT_INSTANT = 18,
+	BUILD = 21,
+	GIVE = 31,
+	EAT = 41,
+	DELETE = 51,
+	ENTER = 101,
+	EXIT = 102,
+	GATE = 103
+}

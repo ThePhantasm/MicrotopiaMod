@@ -1,0 +1,10 @@
+public enum TrailStatus
+{
+	NONE,
+	HOVERING,
+	HOVERING_ERROR,
+	PLACED,
+	PLACED_IN_BUILDING,
+	ACTION,
+	HIDDEN
+}

@@ -1,0 +1,28 @@
+public enum WorldSfx
+{
+	None = 0,
+	AntPickup = 7,
+	AntPickupEnergyPod = 8,
+	AntPickupLarva = 9,
+	AntPickupIronRaw = 10,
+	AntPickupIronBar = 11,
+	AntPickupCopperRaw = 12,
+	AntPickupCopperBar = 13,
+	AntPickupFiber = 14,
+	AntForage = 15,
+	AntPlantCut = 16,
+	AntMineRetrieve = 17,
+	AntDrop = 18,
+	AntDropEnergyPod = 19,
+	AntDropLarva = 20,
+	AntDropIronRaw = 21,
+	AntDropIronBar = 22,
+	AntDropCopperRaw = 23,
+	AntDropCopperBar = 24,
+	AntDropFiber = 25,
+	AntHop = 26,
+	AntDie = 27,
+	QueenEat = 32,
+	QueenLarvaSpawn = 33,
+	PickupWooshArrive = 35
+}

@@ -1,0 +1,20 @@
+public enum PickupCategory
+{
+	NONE,
+	FRUIT,
+	SEED,
+	FUEL,
+	FIBER,
+	STONE,
+	METAL,
+	ENERGY,
+	RAW,
+	PROCESSED,
+	GOODS,
+	LIVING,
+	JUNK,
+	CORPSE,
+	DUST,
+	LIQUID,
+	PLANT
+}

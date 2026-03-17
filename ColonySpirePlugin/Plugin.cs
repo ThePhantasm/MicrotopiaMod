@@ -71,7 +71,8 @@ namespace ColonySpireMod
                 typeof(RadarTowerInitPatch),
                 // Trail Color Customization
                 typeof(TrailResetMaterialPatch),
-                typeof(MainBusColorHotkeyPatch),
+                typeof(TrailColorButtonsPatch),
+                typeof(TrailColorSelectionPatch),
             };
             
             // Load settings early so scale defaults are ready
@@ -112,20 +113,16 @@ namespace ColonySpireMod
 
         // ----------------------------------------------------------------
         // MAIN BUS TRAIL COLOR — customizable color for TrailType.MAIN
-        // Index 0 = vanilla (white), 1-9 = bright color presets
+        // Index 0 = vanilla (white), 1-5 = bright color presets
         // ----------------------------------------------------------------
         public static int mainBusColorIndex = 0;
         public static readonly (string name, Color color, Color emission)[] MainBusColors = {
-            ("White (Default)",  new Color(1.0f, 1.0f, 1.0f, 1f),    new Color(2.0f, 2.0f, 2.0f, 1f)),     // 0: vanilla
-            ("Cyan",             new Color(0.0f, 1.0f, 1.0f, 1f),    new Color(0.0f, 2.0f, 2.0f, 1f)),     // 1
-            ("Magenta",          new Color(1.0f, 0.0f, 1.0f, 1f),    new Color(2.0f, 0.0f, 2.0f, 1f)),     // 2
-            ("Lime",             new Color(0.2f, 1.0f, 0.0f, 1f),    new Color(0.4f, 2.0f, 0.0f, 1f)),     // 3
-            ("Orange",           new Color(1.0f, 0.5f, 0.0f, 1f),    new Color(2.0f, 1.0f, 0.0f, 1f)),     // 4
-            ("Hot Pink",         new Color(1.0f, 0.0f, 0.5f, 1f),    new Color(2.0f, 0.0f, 1.0f, 1f)),     // 5
-            ("Electric Blue",    new Color(0.0f, 0.5f, 1.0f, 1f),    new Color(0.0f, 1.0f, 2.0f, 1f)),     // 6
-            ("Gold",             new Color(1.0f, 0.85f, 0.0f, 1f),   new Color(2.0f, 1.7f, 0.0f, 1f)),     // 7
-            ("Spring Green",     new Color(0.0f, 1.0f, 0.5f, 1f),    new Color(0.0f, 2.0f, 1.0f, 1f)),     // 8
-            ("Red",              new Color(1.0f, 0.15f, 0.1f, 1f),   new Color(2.0f, 0.3f, 0.2f, 1f)),     // 9
+            ("Main Bus",         new Color(1.0f, 1.0f, 1.0f, 1f),    new Color(2.0f, 2.0f, 2.0f, 1f)),     // 0: vanilla white
+            ("Cyan Bus",         new Color(0.0f, 1.0f, 1.0f, 1f),    new Color(0.0f, 2.0f, 2.0f, 1f)),     // 1
+            ("Magenta Bus",      new Color(1.0f, 0.0f, 1.0f, 1f),    new Color(2.0f, 0.0f, 2.0f, 1f)),     // 2
+            ("Lime Bus",         new Color(0.2f, 1.0f, 0.0f, 1f),    new Color(0.4f, 2.0f, 0.0f, 1f)),     // 3
+            ("Orange Bus",       new Color(1.0f, 0.5f, 0.0f, 1f),    new Color(2.0f, 1.0f, 0.0f, 1f)),     // 4
+            ("Blue Bus",         new Color(0.0f, 0.5f, 1.0f, 1f),    new Color(0.0f, 1.0f, 2.0f, 1f)),     // 5
         };
         public static (string name, Color color, Color emission) GetMainBusColor() =>
             MainBusColors[Math.Max(0, Math.Min(mainBusColorIndex, MainBusColors.Length - 1))];
@@ -1015,17 +1012,101 @@ namespace ColonySpireMod
         }
     }
 
-    // Global hotkey: press V during gameplay to cycle Main Bus color
-    [HarmonyPatch(typeof(Gameplay), "Update")]
-    public static class MainBusColorHotkeyPatch {
+    // ================================================================
+    // TRAIL TOOLBAR — inject colored Main Bus buttons into the trail picker
+    // ================================================================
+
+    // Postfix on UITrail.Init — after vanilla creates Null/Main Bus/etc buttons,
+    // we clone the button prefab 5 more times and create colored Main Bus variants.
+    [HarmonyPatch(typeof(UITrail), "Init")]
+    public static class TrailColorButtonsPatch {
+        internal static List<(UITrailTypeButton btn, int colorIdx)> colorButtons = new();
+        internal static UITrailTypeButton originalMainButton = null;
+
         [HarmonyPostfix]
-        static void Postfix() {
-            if (Input.GetKeyDown(KeyCode.V)) {
-                // Don't cycle if we're in a UI text field or similar
-                if (GameManager.instance != null && GameManager.instance.GetStatus() == GameStatus.RUNNING) {
-                    ModState.CycleMainBusColor();
+        static void Postfix(UITrail __instance) {
+            colorButtons.Clear();
+            originalMainButton = null;
+
+            try {
+                var buttonsField = AccessTools.Field(typeof(UITrail), "buttons");
+                var buttons = buttonsField?.GetValue(__instance) as List<UITrailTypeButton>;
+                var prefab = __instance.buttonPrefab;
+                if (buttons == null || prefab == null) return;
+
+                // Find the original Main Bus button so we can reset color when it's clicked
+                foreach (var b in buttons) {
+                    if (b.type == TrailType.MAIN) { originalMainButton = b; break; }
                 }
-            }
+
+                // Wire original Main Bus button to reset color to 0 (white) on click
+                if (originalMainButton != null) {
+                    var btField = AccessTools.Field(typeof(UITrailTypeButton), "btTrailType");
+                    var bt = btField?.GetValue(originalMainButton) as UnityEngine.UI.Button;
+                    bt?.onClick.AddListener(() => {
+                        if (ModState.mainBusColorIndex != 0) {
+                            ModState.mainBusColorIndex = 0;
+                            ModSave.SaveMainBusColor();
+                            ModState.RefreshAllMainBusTrails();
+                        }
+                    });
+                }
+
+                // Add colored Main Bus buttons (indices 1 through N)
+                var uiTrail = __instance;
+                for (int i = 1; i < ModState.MainBusColors.Length; i++) {
+                    int colorIdx = i; // capture for closure
+                    var (colorName, color, emission) = ModState.MainBusColors[colorIdx];
+
+                    // Clone from the prefab (already inactive after vanilla Init)
+                    var newBtn = UnityEngine.Object.Instantiate(prefab, prefab.transform.parent);
+                    newBtn.gameObject.SetActive(true);
+
+                    // Init with MAIN type (sets up click handler, label, type field)
+                    var ttc = new TrailTypeColor { name = colorName, type = TrailType.MAIN };
+                    newBtn.Init(ttc, () => {
+                        ModState.mainBusColorIndex = colorIdx;
+                        ModSave.SaveMainBusColor();
+                        ModState.RefreshAllMainBusTrails();
+                        Gameplay.instance.SetTrailType(TrailType.MAIN);
+                        uiTrail.SetButtonsSelected(TrailType.MAIN);
+                    });
+
+                    // Override button graphics to our custom color (Init set them to white)
+                    foreach (var g in newBtn.buttonGraphics) {
+                        g.imUnselected.color = color;
+                        g.imSelected.color = color;
+                    }
+
+                    buttons.Add(newBtn);
+                    colorButtons.Add((newBtn, colorIdx));
+                }
+
+                Debug.Log($"[Spire] Added {colorButtons.Count} colored Main Bus buttons to trail toolbar");
+            } catch (Exception ex) { Debug.Log($"[Spire] TrailColorButtons: {ex.Message}"); }
+        }
+    }
+
+    // Fix selection highlighting: vanilla selects ALL buttons with TrailType.MAIN,
+    // but we only want the button matching mainBusColorIndex to appear selected.
+    [HarmonyPatch(typeof(UITrail), "SetButtonsSelected")]
+    public static class TrailColorSelectionPatch {
+        [HarmonyPostfix]
+        static void Postfix(TrailType _type) {
+            if (TrailColorButtonsPatch.colorButtons.Count == 0) return;
+            try {
+                if (_type == TrailType.MAIN) {
+                    // Vanilla just lit up ALL MAIN buttons. Fix: select only the active one.
+                    foreach (var (btn, idx) in TrailColorButtonsPatch.colorButtons) {
+                        btn.SetSelected(TrailType.MAIN, idx == ModState.mainBusColorIndex);
+                    }
+                    // If a colored variant is active, deselect the original white Main Bus
+                    if (ModState.mainBusColorIndex > 0 && TrailColorButtonsPatch.originalMainButton != null) {
+                        TrailColorButtonsPatch.originalMainButton.SetSelected(TrailType.MAIN, false);
+                    }
+                }
+                // If _type != MAIN, vanilla already deselected our buttons — nothing to fix
+            } catch (Exception ex) { Debug.Log($"[Spire] TrailColorSelection: {ex.Message}"); }
         }
     }
 

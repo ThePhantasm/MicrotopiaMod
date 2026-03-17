@@ -1,0 +1,16 @@
+public enum StatusEffect
+{
+	NONE = 0,
+	CHARGED = 4,
+	DISEASED = 5,
+	HYPER = 6,
+	RADIATED_LIGHT = 1,
+	RADIATED_MEDIUM = 2,
+	RADIATED_HEAVY = 3,
+	RADIATION = 7,
+	ELECTROLYSED = 8,
+	ELDER_SPED = 9,
+	ELDER_SLOWED = 10,
+	OLD = 11,
+	DEAD = 100
+}

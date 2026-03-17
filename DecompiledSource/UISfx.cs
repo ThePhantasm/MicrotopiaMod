@@ -1,0 +1,27 @@
+public enum UISfx
+{
+	None,
+	BuildingMenuTabClick,
+	BuildingMenuButtonClick,
+	InstinctItemDone,
+	InstinctComplete,
+	TrailDeselect,
+	NuptialFlightTrack,
+	DevelopShimmer,
+	TechHover,
+	TechClick1Or2,
+	TechClick3,
+	TechIdeaEnable,
+	TechIdeaDisable,
+	MenuButtonClick,
+	MenuButtonHover,
+	IslandLoading,
+	IslandAppears_Fallback,
+	MapModeActivate,
+	MapModeDeactivate,
+	IslandAppearCamWoosh,
+	NuptialFlightIntro,
+	DevelopShimmerGyne,
+	BuildingDelete,
+	TrackedBuildingComplete
+}
