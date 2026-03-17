@@ -1,5 +1,5 @@
 # ============================================================
-# Microtopia Queen Tier + Colony Spire Mod — Installer
+# Microtopia Queen Tier + Colony Spire Mod - Installer
 # ============================================================
 # This script applies all mod changes to a clean Microtopia install.
 #
@@ -53,6 +53,20 @@ if (-not (Test-Path $prefabsBackup)) {
 Write-Host ""
 Write-Host "[2/3] Building BepInEx Plugin..." -ForegroundColor Yellow
 
+# Clean up any stale duplicate DLLs in BepInEx subfolders
+# BepInEx scans recursively — having the same plugin in both plugins/ and plugins/ColonySpire/
+# causes a "Skipping because a newer version exists" conflict and unpredictable loading.
+$stalePaths = @(
+    (Join-Path $bepinexPath "ColonySpire\ColonySpirePlugin.dll"),
+    (Join-Path $bepinexPath "ColonySpire")
+)
+foreach ($stale in $stalePaths) {
+    if (Test-Path $stale) {
+        Remove-Item $stale -Recurse -Force
+        Write-Host "  Removed stale duplicate: $stale" -ForegroundColor Yellow
+    }
+}
+
 $pluginSrcDir = Join-Path $scriptDir "ColonySpirePlugin"
 Push-Location $pluginSrcDir
 try {
@@ -84,7 +98,7 @@ if (Test-Path $moddedPrefabs) {
     Copy-Item $moddedPrefabs $prefabsPath -Force
     Write-Host "  prefabs.fods updated with mod recipes." -ForegroundColor Green
 } else {
-    Write-Host "  WARNING: prefabs.fods.modded not found — skipping recipe changes." -ForegroundColor Yellow
+    Write-Host "  WARNING: prefabs.fods.modded not found - skipping recipe changes." -ForegroundColor Yellow
 }
 
 # --- Done ---
@@ -93,7 +107,7 @@ Write-Host "=== Installation complete! ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Mod features:" -ForegroundColor Cyan
 Write-Host "  - Colony Spire (Radar Tower): press 1-7 to select upgrade track, U to upgrade"
-Write-Host "  - Phase 12 Additions: T2 Mining Ants & Spire Energy Efficiency"
+Write-Host "  - Phase 12 Additions: T2 Mining Ants and Spire Energy Efficiency"
 Write-Host "  ...and much more!"
 Write-Host ""
 Write-Host "To safely uninstall, run uninstall.ps1 in your mod folder." -ForegroundColor Gray

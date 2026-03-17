@@ -71,12 +71,34 @@ namespace ColonySpireMod
                 typeof(RadarTowerInitPatch),
                 // Trail Color Customization
                 typeof(TrailResetMaterialPatch),
-                typeof(TrailColorButtonsPatch),
-                typeof(TrailColorSelectionPatch),
+                typeof(TrailColorButtonsPatch),      // hooks UIToolbarExtra.Setup to add colored Main Bus variants
+                typeof(TrailColorSavePatch),          // save per-trail colors to sidecar file
+                typeof(TrailColorLoadPatch),          // load per-trail colors from sidecar file
+                // Stockpile Gate → Battery targeting
+                typeof(StockpileGateCanAssignPatch),
+                typeof(StockpileGateAssignPatch),
+                typeof(StockpileGateCheckPatch),
+                typeof(StockpileGateAssignLinePatch),
+                typeof(StockpileGateEnumPatch),
+                typeof(StockpileGateHologramPatch),
+                typeof(StockpileGateWritePatch),
+                typeof(StockpileGateReadPatch),
+                typeof(StockpileGateLinksPatch),
             };
             
             // Load settings early so scale defaults are ready
             ModSave.Load();
+
+            // Runtime diagnostics: inspect UITrail to understand why Harmony can't find Init
+            try {
+                var uiTrailType = typeof(UITrail);
+                Logger.LogInfo($"[DIAG] typeof(UITrail) = {uiTrailType.FullName} in {uiTrailType.Assembly.GetName().Name}");
+                var methods = uiTrailType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                foreach (var m in methods)
+                    Logger.LogInfo($"[DIAG]   method: {m.ReturnType.Name} {m.Name}({string.Join(", ", Array.ConvertAll(m.GetParameters(), p => p.ParameterType.Name))})");
+                var initMethod = AccessTools.Method(typeof(UITrail), "Init");
+                Logger.LogInfo($"[DIAG] AccessTools.Method(UITrail, Init) = {(initMethod != null ? initMethod.DeclaringType + "." + initMethod.Name : "NULL")}");
+            } catch (Exception ex) { Logger.LogWarning($"[DIAG] UITrail inspection failed: {ex.Message}"); }
 
             foreach (var t in patchClasses)
             {
@@ -126,42 +148,34 @@ namespace ColonySpireMod
         };
         public static (string name, Color color, Color emission) GetMainBusColor() =>
             MainBusColors[Math.Max(0, Math.Min(mainBusColorIndex, MainBusColors.Length - 1))];
-        public static void CycleMainBusColor() {
-            mainBusColorIndex = (mainBusColorIndex + 1) % MainBusColors.Length;
-            ModSave.SaveMainBusColor();
-            RefreshAllMainBusTrails();
-            var c = GetMainBusColor();
-            Debug.Log($"[Spire] Main Bus color -> {c.name} (index {mainBusColorIndex})");
+
+        // Per-trail color storage: each Trail instance remembers the color it was drawn with.
+        // Uses ConditionalWeakTable so colors are automatically cleaned up when trails are GC'd.
+        public static readonly ConditionalWeakTable<Trail, StrongBox<int>> trailColors = new();
+
+        // Pending colors loaded from sidecar file, keyed by linkId.
+        // When a trail is first seen by ResetMaterial, we check this map.
+        public static Dictionary<int, int> pendingTrailColors = new();
+
+        // Get the color index for a specific trail. Returns -1 if not stamped (use vanilla).
+        public static int GetTrailColorIndex(Trail trail) {
+            if (trailColors.TryGetValue(trail, out var box)) return box.Value;
+            return -1; // not stamped → vanilla color
         }
-        public static void RefreshAllMainBusTrails() {
-            // Force all placed Main Bus trails to re-apply their material
-            try {
-                var allTrailsField = AccessTools.Field(typeof(GameManager), "allTrails");
-                if (allTrailsField != null) {
-                    var allTrails = allTrailsField.GetValue(GameManager.instance);
-                    if (allTrails is System.Collections.IEnumerable enumerable) {
-                        foreach (var obj in enumerable) {
-                            if (obj is Trail trail && trail.trailType == TrailType.MAIN && trail.IsPlaced())
-                                trail.ResetMaterial();
-                        }
-                    }
-                }
-                // Also try the placed splits which hold trail references
-                var allSplitsField = AccessTools.Field(typeof(GameManager), "allSplits");
-                if (allSplitsField != null) {
-                    var allSplits = allSplitsField.GetValue(GameManager.instance);
-                    if (allSplits is System.Collections.IEnumerable splitEnum) {
-                        foreach (var obj in splitEnum) {
-                            if (obj is Split split) {
-                                foreach (var trail in split.connectedTrails) {
-                                    if (trail != null && trail.trailType == TrailType.MAIN && trail.IsPlaced())
-                                        trail.ResetMaterial();
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (Exception ex) { Debug.Log($"[Spire] RefreshMainBus: {ex.Message}"); }
+
+        // Stamp a trail with the current color. Called when ResetMaterial fires on a new trail.
+        public static void StampTrailColor(Trail trail, int colorIdx) {
+            if (trailColors.TryGetValue(trail, out var box)) {
+                box.Value = colorIdx;
+            } else {
+                trailColors.Add(trail, new StrongBox<int>(colorIdx));
+            }
+        }
+
+        // Get the sidecar file path for a given save name
+        public static string GetTrailColorPath(string saveName) {
+            var saveDir = System.IO.Path.GetDirectoryName(Files.GameSave(saveName, false));
+            return System.IO.Path.Combine(saveDir, saveName + ".trailcolors");
         }
 
         public static readonly string[] TrackNames = { "Speed", "Queen", "Mine", "Mold", "Wings", "Sentinel", "Energy", "Gather" };
@@ -374,17 +388,90 @@ namespace ColonySpireMod
             var qd = ModState.GetQueen(__instance);
             __0.SetTitle(__instance.data.GetTitle() + $" [T{qd.larvaOutputTier}] ★{ModState.prestigeLevel}");
             try {
-                var btn = __0.GetButton((UIClickButtonType)50, false);
+                var btn = __0.GetButton((UIClickButtonType)50, false); // Generic1
+
+                if (btn == null) {
+                    // Generic1 button doesn't exist in this layout — create one dynamically
+                    btn = CreateQueenTierButton(__0);
+                }
+
                 if (btn != null) {
+                    // Wire click: cycle T1→T2→T3→T1
                     btn.SetButton(() => {
                         qd.larvaOutputTier = (qd.larvaOutputTier % 3) + 1;
-                        ModSave.Save(qd.larvaOutputTier); // persist queen tier
+                        ModSave.Save(qd.larvaOutputTier);
                         __0.SetTitle(__instance.data.GetTitle() + $" [T{qd.larvaOutputTier}] ★{ModState.prestigeLevel}");
                         __0.UpdateButton((UIClickButtonType)50, true, Labels[qd.larvaOutputTier - 1], true);
                     }, (InputAction)0);
+                    // Show with current tier label
+                    __0.UpdateButton((UIClickButtonType)50, true, Labels[qd.larvaOutputTier - 1], true);
+                    Debug.Log($"[Spire] Queen tier button active: T{qd.larvaOutputTier}");
+                } else {
+                    Debug.LogWarning("[Spire] Queen tier button: could not create or find button");
                 }
-                __0.UpdateButton((UIClickButtonType)50, true, Labels[qd.larvaOutputTier - 1], true);
             } catch (Exception ex) { Debug.Log($"[Spire] Queen btn: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Dynamically creates a Generic1 button by cloning an existing button in the layout.
+        /// This handles cases where the BUILDING_SMALL layout doesn't have a Generic1 slot.
+        /// </summary>
+        static ButtonWithHotkey CreateQueenTierButton(UIClickLayout layout) {
+            try {
+                // Get the buttonsWithHotkey list via reflection
+                var listField = AccessTools.Field(typeof(UIClickLayout), "buttonsWithHotkey");
+                if (listField == null) return null;
+                var buttons = listField.GetValue(layout) as List<ButtonWithHotkey>;
+                if (buttons == null || buttons.Count == 0) return null;
+
+                // Find a template button to clone (prefer one with btButton_better for nice visuals)
+                ButtonWithHotkey template = null;
+                foreach (var b in buttons) {
+                    if (b.btButton_better != null && b.btButton_better.gameObject != null) {
+                        template = b;
+                        break;
+                    }
+                }
+                if (template == null) template = buttons[0];
+                if (template == null) return null;
+
+                // Determine the source GameObject
+                GameObject sourceGo = template.btButton_better?.gameObject ?? template.btButton?.gameObject;
+                if (sourceGo == null) return null;
+
+                // Clone the button's entire UI hierarchy
+                var clonedGo = UnityEngine.Object.Instantiate(sourceGo, sourceGo.transform.parent);
+                clonedGo.name = "BtQueenTier_Spire";
+                clonedGo.SetActive(true);
+
+                // Build a new ButtonWithHotkey pointing at the cloned components
+                var newBtn = new ButtonWithHotkey();
+                newBtn.buttonType = (UIClickButtonType)50; // Generic1
+
+                // Wire up btButton_better or btButton depending on what the template had
+                var clonedBetter = clonedGo.GetComponent<UITextImageButton>();
+                if (clonedBetter != null) {
+                    newBtn.btButton_better = clonedBetter;
+                } else {
+                    var clonedSimple = clonedGo.GetComponent<UIButton>();
+                    if (clonedSimple != null) newBtn.btButton = clonedSimple;
+                }
+
+                // Try to find TMP_Text on the clone for the label
+                var tmpText = clonedGo.GetComponentInChildren<TMPro.TMP_Text>();
+                if (tmpText != null) newBtn.lbButton = tmpText;
+
+                // Hide any hotkey indicator on the cloned button
+                if (newBtn.obHotkey != null) newBtn.obHotkey.SetActive(false);
+
+                // Add to the layout's button list so GetButton/UpdateButton can find it
+                buttons.Add(newBtn);
+                Debug.Log("[Spire] Dynamically created Queen tier button (cloned from existing layout button)");
+                return newBtn;
+            } catch (Exception ex) {
+                Debug.Log($"[Spire] CreateQueenTierButton failed: {ex.Message}");
+                return null;
+            }
         }
     }
     // Queen Init — restore saved tier on first init only (uses initialized flag)
@@ -916,7 +1003,7 @@ namespace ColonySpireMod
                     (int index) => {                    // setter: on selection changed
                         ModState.mainBusColorIndex = Math.Max(0, Math.Min(index, ModState.MainBusColors.Length - 1));
                         ModSave.SaveMainBusColor();
-                        ModState.RefreshAllMainBusTrails();
+                        // Only new trails get the new color — existing trails keep theirs
                         Debug.Log($"[Spire] Main Bus color -> {ModState.GetMainBusColor().name} (index {ModState.mainBusColorIndex})");
                     }
                 );
@@ -951,30 +1038,106 @@ namespace ColonySpireMod
     }
 
     // ================================================================
-    // MAIN BUS TRAIL COLOR CUSTOMIZATION
+    // MAIN BUS TRAIL COLOR CUSTOMIZATION — SAVE & LOAD
     // ================================================================
 
+    // Save per-trail colors to a sidecar file when the game saves
+    [HarmonyPatch(typeof(GameManager), "SaveGame")]
+    public static class TrailColorSavePatch {
+        [HarmonyPostfix]
+        static void Postfix(bool __result, string save_name) {
+            if (!__result) return; // save failed, don't write sidecar
+            try {
+                var allTrailsField = AccessTools.Field(typeof(GameManager), "allTrails");
+                if (allTrailsField == null) return;
+                var allTrails = allTrailsField.GetValue(GameManager.instance) as HashSet<Trail>;
+                if (allTrails == null) return;
+
+                var lines = new List<string>();
+                foreach (var trail in allTrails) {
+                    if (trail == null || trail.trailType != TrailType.MAIN) continue;
+                    if (trail.linkId == 0) continue; // not saved
+                    int colorIdx = ModState.GetTrailColorIndex(trail);
+                    if (colorIdx > 0) { // only save non-default colors
+                        lines.Add($"{trail.linkId}:{colorIdx}");
+                    }
+                }
+
+                string path = ModState.GetTrailColorPath(save_name);
+                if (lines.Count > 0) {
+                    System.IO.File.WriteAllLines(path, lines);
+                    Debug.Log($"[Spire] TrailColor: saved {lines.Count} colored trails to {path}");
+                } else if (System.IO.File.Exists(path)) {
+                    System.IO.File.Delete(path); // no colors to save, clean up old file
+                }
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire] TrailColor save failed: {ex}");
+            }
+        }
+    }
+
+    // Load per-trail colors from sidecar file when the game loads
+    [HarmonyPatch(typeof(GameManager), "KStartLoadGame")]
+    public static class TrailColorLoadPatch {
+        [HarmonyPrefix]
+        static void Prefix(string save_name) {
+            try {
+                ModState.pendingTrailColors.Clear();
+                string path = ModState.GetTrailColorPath(save_name);
+                if (!System.IO.File.Exists(path)) {
+                    Debug.Log($"[Spire] TrailColor: no sidecar file for '{save_name}'");
+                    return;
+                }
+
+                var lines = System.IO.File.ReadAllLines(path);
+                foreach (var line in lines) {
+                    var parts = line.Split(':');
+                    if (parts.Length == 2 && int.TryParse(parts[0], out int linkId) && int.TryParse(parts[1], out int colorIdx)) {
+                        ModState.pendingTrailColors[linkId] = colorIdx;
+                    }
+                }
+                Debug.Log($"[Spire] TrailColor: loaded {ModState.pendingTrailColors.Count} pending colors from {path}");
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire] TrailColor load failed: {ex}");
+            }
+        }
+    }
+
     // Postfix on Trail.ResetMaterial — after vanilla sets the material, we
-    // override the color properties for MAIN trails to the user's chosen color.
+    // override the color properties for MAIN trails using per-trail color.
+    // When a trail has no stamped color, we stamp it with the currently selected color.
     [HarmonyPatch(typeof(Trail), "ResetMaterial")]
     public static class TrailResetMaterialPatch {
         [HarmonyPostfix]
         static void Postfix(Trail __instance) {
-            if (ModState.mainBusColorIndex <= 0) return; // 0 = vanilla, skip
             if (__instance.trailType != TrailType.MAIN) return;
             try {
-                var (name, color, emission) = ModState.GetMainBusColor();
-                // Get the active TrailShapeObject and override its rendered material colors
+                // Stamp this trail with a color if it doesn't have one yet
+                int colorIdx = ModState.GetTrailColorIndex(__instance);
+                if (colorIdx < 0) {
+                    // Check if there's a pending color from a loaded save
+                    if (__instance.linkId != 0 && ModState.pendingTrailColors.TryGetValue(__instance.linkId, out int pendingColor)) {
+                        colorIdx = pendingColor;
+                        ModState.pendingTrailColors.Remove(__instance.linkId);
+                    } else {
+                        // New trail — stamp it with the current selection
+                        colorIdx = ModState.mainBusColorIndex;
+                    }
+                    ModState.StampTrailColor(__instance, colorIdx);
+                }
+
+                // Color 0 = vanilla white, no override needed
+                if (colorIdx <= 0) return;
+
+                var (name, color, emission) = ModState.MainBusColors[
+                    Math.Max(0, Math.Min(colorIdx, ModState.MainBusColors.Length - 1))];
+
+                // Override material colors
                 var curShapeField = AccessTools.Field(typeof(Trail), "curTrailShapeObject");
                 if (curShapeField == null) return;
                 var curShape = curShapeField.GetValue(__instance) as TrailShapeObject;
                 if (curShape == null) return;
 
-                // For useLineMesh shapes (THICK = the Main Bus default shape),
-                // the material is set on quadRenderer and quadRendererArrow via
-                // MaterialLibrary.GetTrailMaterial which creates a new Material clone
-                // keyed by (rend_nr, _Color, _EmissionColor, offset).
-                // We override the material's color properties directly.
                 var quadRendField = AccessTools.Field(typeof(Trail), "quadRenderer");
                 var quadArrowField = AccessTools.Field(typeof(Trail), "quadRendererArrow");
                 if (quadRendField != null) {
@@ -991,7 +1154,6 @@ namespace ColonySpireMod
                         quadArrow.material.SetColor("_EmissionColor", emission);
                     }
                 }
-                // Also override non-useLineMesh renderers (rends/rendsShaded)
                 if (curShape.rends != null) {
                     foreach (var r in curShape.rends) {
                         if (r != null && r.gameObject.activeSelf && r.material != null) {
@@ -1012,103 +1174,125 @@ namespace ColonySpireMod
         }
     }
 
-    // ================================================================
-    // TRAIL TOOLBAR — inject colored Main Bus buttons into the trail picker
-    // ================================================================
+    // The sub-toolbar (UIToolbarExtra) appears when you click a trail type that
+    // has siblings (e.g. MAIN shows NULL+MAIN). It has its own layout and button
+    // list, so we can freely add colored Main Bus buttons here without overflow.
+    // We hook UIToolbarExtra.Setup(TrailType, Transform) to add extra color buttons.
 
-    // Postfix on UITrail.Init — after vanilla creates Null/Main Bus/etc buttons,
-    // we clone the button prefab 5 more times and create colored Main Bus variants.
-    [HarmonyPatch(typeof(UITrail), "Init")]
+    [HarmonyPatch(typeof(UIToolbarExtra), "Setup", new[] { typeof(TrailType), typeof(Transform) })]
     public static class TrailColorButtonsPatch {
-        internal static List<(UITrailTypeButton btn, int colorIdx)> colorButtons = new();
-        internal static UITrailTypeButton originalMainButton = null;
-
         [HarmonyPostfix]
-        static void Postfix(UITrail __instance) {
-            colorButtons.Clear();
-            originalMainButton = null;
-
+        static void Postfix(UIToolbarExtra __instance, TrailType selected_trail) {
             try {
-                var buttonsField = AccessTools.Field(typeof(UITrail), "buttons");
-                var buttons = buttonsField?.GetValue(__instance) as List<UITrailTypeButton>;
-                var prefab = __instance.buttonPrefab;
-                if (buttons == null || prefab == null) return;
+                // Only add color buttons when a MAIN-family trail is selected
+                if (selected_trail == TrailType.NONE) return;
+                TrailData selectedData = TrailData.Get(selected_trail);
+                if (selectedData == null) return;
 
-                // Find the original Main Bus button so we can reset color when it's clicked
-                foreach (var b in buttons) {
-                    if (b.type == TrailType.MAIN) { originalMainButton = b; break; }
+                // Check if this is the MAIN/NULL family by looking at parentType
+                // MAIN and NULL share a parentType; we want to inject when either is selected
+                TrailType parentType = selectedData.parentType;
+                if (parentType == TrailType.NONE) return;
+
+                // Check if MAIN is in this family
+                bool hasMain = false;
+                foreach (TrailData trail in PrefabData.trails) {
+                    if (trail.parentType == parentType && trail.type == TrailType.MAIN) {
+                        hasMain = true;
+                        break;
+                    }
+                }
+                if (!hasMain) return;
+
+                Debug.Log($"[Spire] TrailColorButtons: UIToolbarExtra.Setup fired for {selected_trail}, parentType={parentType}");
+
+                // Access the spawned buttons list and prefab
+                var spawnedField = AccessTools.Field(typeof(UIToolbarExtra), "spawnedButtons");
+                var prefabField = AccessTools.Field(typeof(UIToolbarExtra), "prefabButton");
+                var uiToolbarField = AccessTools.Field(typeof(UIToolbarExtra), "uiToolbar");
+                var spawnedButtons = spawnedField?.GetValue(__instance) as List<UIBuildingButton>;
+                var prefab = prefabField?.GetValue(__instance) as UIBuildingButton;
+                var uiToolbar = uiToolbarField?.GetValue(__instance) as UIBuildingMenu;
+
+                if (spawnedButtons == null || prefab == null || uiToolbar == null) {
+                    Debug.LogError("[Spire] TrailColorButtons: couldn't access UIToolbarExtra fields");
+                    return;
                 }
 
-                // Wire original Main Bus button to reset color to 0 (white) on click
-                if (originalMainButton != null) {
-                    var btField = AccessTools.Field(typeof(UITrailTypeButton), "btTrailType");
-                    var bt = btField?.GetValue(originalMainButton) as UnityEngine.UI.Button;
-                    bt?.onClick.AddListener(() => {
-                        if (ModState.mainBusColorIndex != 0) {
-                            ModState.mainBusColorIndex = 0;
-                            ModSave.SaveMainBusColor();
-                            ModState.RefreshAllMainBusTrails();
-                        }
-                    });
-                }
+                Debug.Log($"[Spire] TrailColorButtons: {spawnedButtons.Count} existing sub-buttons");
 
-                // Add colored Main Bus buttons (indices 1 through N)
-                var uiTrail = __instance;
+                // Add a colored button for each non-default color variant
                 for (int i = 1; i < ModState.MainBusColors.Length; i++) {
-                    int colorIdx = i; // capture for closure
+                    int colorIdx = i;
                     var (colorName, color, emission) = ModState.MainBusColors[colorIdx];
 
-                    // Clone from the prefab (already inactive after vanilla Init)
-                    var newBtn = UnityEngine.Object.Instantiate(prefab, prefab.transform.parent);
-                    newBtn.gameObject.SetActive(true);
+                    // Create or reuse a button
+                    UIBuildingButton btn;
+                    if (spawnedButtons.Count > 0) {
+                        // We need a new button beyond what vanilla created
+                        var newGo = UnityEngine.Object.Instantiate(prefab.gameObject, prefab.transform.parent);
+                        btn = newGo.GetComponent<UIBuildingButton>();
+                        spawnedButtons.Add(btn);
+                    } else {
+                        continue;
+                    }
 
-                    // Init with MAIN type (sets up click handler, label, type field)
-                    var ttc = new TrailTypeColor { name = colorName, type = TrailType.MAIN };
-                    newBtn.Init(ttc, () => {
+                    // Get Main Bus trail icon
+                    Color iconColor;
+                    Sprite trailIcon = AssetLinks.standard.GetTrailIcon(TrailType.MAIN, out iconColor);
+
+                    // Initialize the button like vanilla does
+                    btn.Init(colorName, (Action)(() => {
                         ModState.mainBusColorIndex = colorIdx;
                         ModSave.SaveMainBusColor();
-                        ModState.RefreshAllMainBusTrails();
-                        Gameplay.instance.SetTrailType(TrailType.MAIN);
-                        uiTrail.SetButtonsSelected(TrailType.MAIN);
-                    });
-
-                    // Override button graphics to our custom color (Init set them to white)
-                    foreach (var g in newBtn.buttonGraphics) {
-                        g.imUnselected.color = color;
-                        g.imSelected.color = color;
+                        // Don't refresh existing trails — only new trails get the new color
+                        uiToolbar.OnClickTrailButton(TrailType.MAIN);
+                        Debug.Log($"[Spire] Trail color set to {colorName} (idx {colorIdx})");
+                    }));
+                    btn.SetImage(trailIcon);
+                    btn.SetImageColor(color);
+                    btn.ResetOverlays();
+                    if (selected_trail == TrailType.MAIN && colorIdx == ModState.mainBusColorIndex) {
+                        btn.AddOverlay(OverlayTypes.SELECTED);
                     }
+                    btn.SetInteractable(true);
+                    btn.SetObActive(true);
+                    btn.SetHotkey("");
 
-                    buttons.Add(newBtn);
-                    colorButtons.Add((newBtn, colorIdx));
+                    Debug.Log($"[Spire] Added sub-toolbar color button: {colorName} (idx {colorIdx})");
                 }
 
-                Debug.Log($"[Spire] Added {colorButtons.Count} colored Main Bus buttons to trail toolbar");
-            } catch (Exception ex) { Debug.Log($"[Spire] TrailColorButtons: {ex.Message}"); }
+                // Also tint the existing MAIN button if a non-default color is selected
+                // and deselect it if a color variant is what's active
+                if (ModState.mainBusColorIndex > 0 && selected_trail == TrailType.MAIN) {
+                    // Find the vanilla MAIN button in the sub-toolbar and deselect it
+                    // (our colored variant should be selected instead)
+                    foreach (var btn in spawnedButtons) {
+                        if (btn != null && btn.gameObject.activeSelf && btn.GetText() != null) {
+                            // Can't easily identify which is MAIN vs NULL, so skip for now
+                        }
+                    }
+                }
+
+                // Force layout recalculation
+                var rtButtons = AccessTools.Field(typeof(UIToolbarExtra), "rtButtons")?.GetValue(__instance) as RectTransform;
+                if (rtButtons != null) {
+                    UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rtButtons);
+                }
+                // Also resize the background
+                var rtBackground = AccessTools.Field(typeof(UIToolbarExtra), "rtBackground")?.GetValue(__instance) as RectTransform;
+                if (rtBackground != null && rtButtons != null) {
+                    // Match background width to buttons area
+                    rtBackground.sizeDelta = new Vector2(rtButtons.rect.width + 20f, rtBackground.sizeDelta.y);
+                }
+
+                Debug.Log($"[Spire] TrailColorButtons: SUCCESS — added {ModState.MainBusColors.Length - 1} color buttons to sub-toolbar");
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire] TrailColorButtons FAILED: {ex}");
+            }
         }
     }
 
-    // Fix selection highlighting: vanilla selects ALL buttons with TrailType.MAIN,
-    // but we only want the button matching mainBusColorIndex to appear selected.
-    [HarmonyPatch(typeof(UITrail), "SetButtonsSelected")]
-    public static class TrailColorSelectionPatch {
-        [HarmonyPostfix]
-        static void Postfix(TrailType _type) {
-            if (TrailColorButtonsPatch.colorButtons.Count == 0) return;
-            try {
-                if (_type == TrailType.MAIN) {
-                    // Vanilla just lit up ALL MAIN buttons. Fix: select only the active one.
-                    foreach (var (btn, idx) in TrailColorButtonsPatch.colorButtons) {
-                        btn.SetSelected(TrailType.MAIN, idx == ModState.mainBusColorIndex);
-                    }
-                    // If a colored variant is active, deselect the original white Main Bus
-                    if (ModState.mainBusColorIndex > 0 && TrailColorButtonsPatch.originalMainButton != null) {
-                        TrailColorButtonsPatch.originalMainButton.SetSelected(TrailType.MAIN, false);
-                    }
-                }
-                // If _type != MAIN, vanilla already deselected our buttons — nothing to fix
-            } catch (Exception ex) { Debug.Log($"[Spire] TrailColorSelection: {ex.Message}"); }
-        }
-    }
 
     // ================================================================
     // CONCRETE ISLAND OVERHAUL (PHASES 1 - 5)
@@ -1679,6 +1863,244 @@ namespace ColonySpireMod
                 lr.startWidth = a * 0.5f;
                 lr.endWidth = a * 0.5f;
             }
+        }
+    }
+
+    // ================================================================
+    // STOCKPILE GATE → BATTERY TARGETING
+    // Allows TrailGate_Stockpile to target BatteryBuilding in addition
+    // to Stockpile. The battery's storedEnergy is compared against the
+    // gate's threshold amount. We store the battery reference in a
+    // side-dict because the gate's `stockpile` field is Stockpile-typed.
+    // ================================================================
+    public static class BatteryGateState
+    {
+        // Gate instance-ID → BatteryBuilding
+        public static readonly Dictionary<int, BatteryBuilding> batteryTargets = new();
+
+        public static BatteryBuilding GetBattery(TrailGate_Stockpile gate)
+        {
+            batteryTargets.TryGetValue(gate.GetInstanceID(), out var b);
+            return b;
+        }
+        public static void SetBattery(TrailGate_Stockpile gate, BatteryBuilding b)
+        {
+            if (b != null)
+                batteryTargets[gate.GetInstanceID()] = b;
+            else
+                batteryTargets.Remove(gate.GetInstanceID());
+        }
+    }
+
+    // 1. CanAssignTo — also accept BatteryBuilding
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "CanAssignTo")]
+    public static class StockpileGateCanAssignPatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance, ClickableObject target, ref string error, ref bool __result)
+        {
+            if (target is BatteryBuilding)
+            {
+                error = "";
+                __result = true;
+                return false; // skip original
+            }
+            return true; // let original handle Stockpile / base
+        }
+    }
+
+    // 2. Assign — store BatteryBuilding in our side-dict, clear stockpile
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "Assign")]
+    public static class StockpileGateAssignPatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance, ClickableObject target, bool add)
+        {
+            if (target is BatteryBuilding battery)
+            {
+                if (add)
+                {
+                    BatteryGateState.SetBattery(__instance, battery);
+                    __instance.stockpile = null; // clear stockpile so they don't conflict
+                }
+                else
+                {
+                    BatteryGateState.SetBattery(__instance, null);
+                }
+                // UpdateBillboard via reflection (private method on base)
+                AccessTools.Method(typeof(TrailGate_Stockpile), "UpdateBillboard")?.Invoke(__instance, null);
+                Debug.Log($"[Spire] Stockpile gate assigned to Battery: {(add ? battery.name : "cleared")}");
+                return false;
+            }
+            // If assigning to a normal Stockpile, clear any battery reference
+            if (target is Stockpile && add)
+                BatteryGateState.SetBattery(__instance, null);
+            return true;
+        }
+    }
+
+    // 3. CheckIfSatisfied — use storedEnergy when targeting a battery
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "CheckIfSatisfied")]
+    public static class StockpileGateCheckPatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance, Ant _ant, bool final, bool chain_satisfied, ref bool __result)
+        {
+            var battery = BatteryGateState.GetBattery(__instance);
+            if (battery == null) return true; // no battery target, use original stockpile logic
+
+            int energyInt = Mathf.RoundToInt(battery.storedEnergy);
+            bool flag = __instance.lowerThan ? (energyInt < __instance.amount) : (energyInt > __instance.amount);
+            if (final)
+            {
+                // Show the green/red traffic light via reflection on the base gate
+                AccessTools.Method(typeof(TrailGate_Stockpile), "ShowAllowAnt")
+                    ?.Invoke(__instance, new object[] { flag, true, chain_satisfied });
+            }
+            __result = flag;
+            return false;
+        }
+    }
+
+    // 4. SetAssignLine — show line to battery
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "SetAssignLine")]
+    public static class StockpileGateAssignLinePatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance, bool show)
+        {
+            var battery = BatteryGateState.GetBattery(__instance);
+            if (battery == null) return true; // no battery, use original
+            if (show)
+                __instance.ShowAssignLine(battery, AssignType.GATE);
+            else
+                __instance.HideAssignLines();
+            return false;
+        }
+    }
+
+    // 5. EAssignedObjects — yield battery instead of stockpile
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "EAssignedObjects")]
+    public static class StockpileGateEnumPatch
+    {
+        [HarmonyPostfix]
+        static void Postfix(TrailGate_Stockpile __instance, ref IEnumerable<ClickableObject> __result)
+        {
+            var battery = BatteryGateState.GetBattery(__instance);
+            if (battery != null)
+            {
+                // Replace the result entirely — yield just the battery
+                __result = YieldBattery(battery);
+            }
+        }
+        static IEnumerable<ClickableObject> YieldBattery(BatteryBuilding b)
+        {
+            yield return b;
+        }
+    }
+
+    // 6. GetHologramShape — show energy icon for battery
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "GetHologramShape")]
+    public static class StockpileGateHologramPatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance, ref PickupType _pickup, ref AntCaste _ant, ref HologramShape __result)
+        {
+            var battery = BatteryGateState.GetBattery(__instance);
+            if (battery == null) return true;
+            _pickup = PickupType.NONE;
+            _ant = AntCaste.NONE;
+            // Show a lightning bolt / energy shape — BatteryBuilding doesn't have a hologram
+            // so we show the generic QuestionMark but with a pickup hint if possible
+            __result = HologramShape.QuestionMark;
+            return false;
+        }
+    }
+
+    // 7. WriteConfig — write battery building reference in place of stockpile
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "WriteConfig")]
+    public static class StockpileGateWritePatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance, ISaveContainer save)
+        {
+            var battery = BatteryGateState.GetBattery(__instance);
+            if (battery == null) return true; // no battery, let original write stockpile
+            // Write same format as vanilla: lowerThan, amount, building-reference
+            // but substitute the battery for the stockpile slot
+            save.Write(__instance.lowerThan);
+            save.Write(__instance.amount);
+            save.Write((Building)battery);
+            Debug.Log($"[Spire] StockpileGate WriteConfig: saved battery {battery.name}");
+            return false;
+        }
+    }
+
+    // 8. ReadConfig — read building reference; if it's a BatteryBuilding, store in side-dict
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "ReadConfig")]
+    public static class StockpileGateReadPatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance, ISaveContainer save)
+        {
+            // Read same format as vanilla
+            __instance.lowerThan = save.ReadBool();
+            __instance.amount = save.ReadInt();
+            BuildingLink buildingLink = save.ReadBuilding();
+            if (buildingLink.postpone)
+            {
+                // Building not loaded yet — store ID for LoadLinks to resolve
+                AccessTools.Field(typeof(TrailGate_Stockpile), "stockpileId")
+                    .SetValue(__instance, buildingLink.id);
+            }
+            else if (buildingLink.building is BatteryBuilding battery)
+            {
+                BatteryGateState.SetBattery(__instance, battery);
+                __instance.stockpile = null;
+                Debug.Log($"[Spire] StockpileGate ReadConfig: loaded battery {battery.name}");
+            }
+            else
+            {
+                __instance.stockpile = buildingLink.building as Stockpile;
+            }
+            return false; // skip original
+        }
+    }
+
+    // 9. LoadLinks — resolve postponed building ID as Stockpile or BatteryBuilding
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "LoadLinks")]
+    public static class StockpileGateLinksPatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Stockpile __instance)
+        {
+            var idField = AccessTools.Field(typeof(TrailGate_Stockpile), "stockpileId");
+            int id = (int)idField.GetValue(__instance);
+            if (id == -1) return false; // nothing to link
+
+            // Try Stockpile first (vanilla behavior)
+            var stockpile = GameManager.instance.FindLink<Stockpile>(id);
+            if (stockpile != null)
+            {
+                __instance.stockpile = stockpile;
+                Debug.Log($"[Spire] StockpileGate LoadLinks: resolved stockpile id={id}");
+                return false;
+            }
+
+            // Try BatteryBuilding
+            var battery = GameManager.instance.FindLink<BatteryBuilding>(id);
+            if (battery != null)
+            {
+                BatteryGateState.SetBattery(__instance, battery);
+                __instance.stockpile = null;
+                Debug.Log($"[Spire] StockpileGate LoadLinks: resolved battery id={id}");
+            }
+            else
+            {
+                Debug.LogWarning($"[Spire] StockpileGate LoadLinks: could not resolve id={id} as Stockpile or Battery");
+            }
+
+            return false; // skip original
         }
     }
 }
