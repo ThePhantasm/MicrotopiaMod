@@ -16,96 +16,112 @@ namespace ColonySpireMod
         {
             Logger.LogInfo("Colony Spire Mod loading...");
             var harmony = new Harmony("com.colonyspire.mod");
-            var patchClasses = new[] {
-                typeof(PrestigePatch),
-                typeof(SpeedPatch),
-                // Queen
-                typeof(QueenBuildingUpdatePatch),
-                typeof(QueenSetClickUiPatch),
-                typeof(QueenInitPatch),
-                typeof(SpawnPickupPatch),            // remap T1 larva -> T2/T3 based on queen tier
-                // Colony Spire (RadarIslandScanner prefab via updated fods)
-                typeof(SpireInitPatch),
-                typeof(SpireBuildingUpdatePatch),
-                typeof(SpireClickTypePatch),
-                // Unlocker hooks — intercept chooser without constructing UnlockRecipeData
-                typeof(UnlockerSetUnlockPatch),
-                typeof(UnlockerPickUnlockPatch),     // cycle our 6 tracks instead of TechTree lookup
-                typeof(UnlockerAnythingToUnlockPatch),
-                typeof(UnlockerGetAvailableCountPatch),
-                typeof(UnlockerEAvailablePatch),
-                typeof(UnlockerCanInsertPatch),
-                typeof(UnlockerDoUnlockPatch),
-                typeof(UnlockerGatherProgressPatch),
-                typeof(SetUnlockNamePatch),
-                typeof(SetChangeButtonOverridePatch),  // bypass UIRecipeMenu popup; just cycle tracks
-                typeof(SaveOnWritePatch),               // persist mod state across sessions
-                typeof(AutoUnlockPatch),
-                // Phase 6: Mold Resistance
-                typeof(MoldResistancePatch),
-                // Phase 7: Mining Speed
-                typeof(MiningSpeedPatch),
-                // Phase 8: Wing Carry Capacity
-                typeof(WingCarryPatch),
-                // HUD: larvae/min bar shows tier-adjusted rate + larva type label
-                typeof(LarvaRateHudPatch),
-                // Phase 11: Gatherer Speed
-                typeof(GathererDelayPatch),
-                // Phase 12: Energy Efficiency
-                // typeof(EnergyDrainPatch),
-                // Island Scale
+
+            // Load settings early so toggles and scale defaults are ready
+            ModSave.Load();
+
+            // Build the patch list based on feature toggles
+            var patchClasses = new List<Type>();
+
+            // ── Always-on: Settings UI, Island Scale, Save persistence ──
+            patchClasses.AddRange(new[] {
                 typeof(GroundInitShapePatch),
                 typeof(GroundCreatePatch),
                 typeof(UISettingsWorldPatch),
                 typeof(UIWorldSettingsInitPatch),
-                // Concrete Island Combat
-                typeof(CorpseSetHoverHealthPatch),
-                typeof(CorpseMineDurationPatch),
-                typeof(CorpseAttackPatch),
-                typeof(CorpseHoverHealthPatch),
-                typeof(CorpseSetClickUIHealthPatch),
-                typeof(CorpseUpdateClickUIHealthPatch),
-                typeof(CorpseInitPatch),
-                typeof(ShieldGeneratorTitlePatch),
-                typeof(ShieldGeneratorDescPatch),
-                typeof(RadarTowerInitPatch),
-                // Trail Color Customization
-                typeof(TrailResetMaterialPatch),
-                typeof(TrailColorButtonsPatch),      // hooks UIToolbarExtra.Setup to add colored Main Bus variants
-                typeof(TrailColorSavePatch),          // save per-trail colors to sidecar file
-                typeof(TrailColorLoadPatch),          // load per-trail colors from sidecar file
-                // Stockpile Gate → Battery targeting
-                typeof(StockpileGateCanAssignPatch),
-                typeof(StockpileGateAssignPatch),
-                typeof(StockpileGateCheckPatch),
-                typeof(StockpileGateAssignLinePatch),
-                typeof(StockpileGateEnumPatch),
-                typeof(StockpileGateHologramPatch),
-                typeof(StockpileGateWritePatch),
-                typeof(StockpileGateReadPatch),
-                typeof(StockpileGateLinksPatch),
-            };
-            
-            // Load settings early so scale defaults are ready
-            ModSave.Load();
+            });
 
-            // Runtime diagnostics: inspect UITrail to understand why Harmony can't find Init
-            try {
-                var uiTrailType = typeof(UITrail);
-                Logger.LogInfo($"[DIAG] typeof(UITrail) = {uiTrailType.FullName} in {uiTrailType.Assembly.GetName().Name}");
-                var methods = uiTrailType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                foreach (var m in methods)
-                    Logger.LogInfo($"[DIAG]   method: {m.ReturnType.Name} {m.Name}({string.Join(", ", Array.ConvertAll(m.GetParameters(), p => p.ParameterType.Name))})");
-                var initMethod = AccessTools.Method(typeof(UITrail), "Init");
-                Logger.LogInfo($"[DIAG] AccessTools.Method(UITrail, Init) = {(initMethod != null ? initMethod.DeclaringType + "." + initMethod.Name : "NULL")}");
-            } catch (Exception ex) { Logger.LogWarning($"[DIAG] UITrail inspection failed: {ex.Message}"); }
+            // ── Prestige System ──
+            if (ModState.enablePrestige) {
+                Logger.LogInfo("[Feature] Prestige System: ENABLED");
+                patchClasses.AddRange(new[] {
+                    typeof(PrestigePatch),
+                    typeof(SpeedPatch),
+                    typeof(QueenBuildingUpdatePatch),
+                    typeof(QueenSetClickUiPatch),
+                    typeof(QueenInitPatch),
+                    typeof(SpawnPickupPatch),
+                    typeof(SpireInitPatch),
+                    typeof(SpireBuildingUpdatePatch),
+                    typeof(SpireClickTypePatch),
+                    typeof(UnlockerSetUnlockPatch),
+                    typeof(UnlockerPickUnlockPatch),
+                    typeof(UnlockerAnythingToUnlockPatch),
+                    typeof(UnlockerGetAvailableCountPatch),
+                    typeof(UnlockerEAvailablePatch),
+                    typeof(UnlockerCanInsertPatch),
+                    typeof(UnlockerDoUnlockPatch),
+                    typeof(UnlockerGatherProgressPatch),
+                    typeof(SetUnlockNamePatch),
+                    typeof(SetChangeButtonOverridePatch),
+                    typeof(SaveOnWritePatch),
+                    typeof(AutoUnlockPatch),
+                    typeof(MoldResistancePatch),
+                    typeof(MiningSpeedPatch),
+                    typeof(WingCarryPatch),
+                    typeof(LarvaRateHudPatch),
+                    typeof(GathererDelayPatch),
+                });
+            } else {
+                Logger.LogInfo("[Feature] Prestige System: DISABLED");
+            }
+
+            // ── Concrete Island Combat ──
+            if (ModState.enableCombat) {
+                Logger.LogInfo("[Feature] Concrete Island Combat: ENABLED");
+                patchClasses.AddRange(new[] {
+                    typeof(CorpseSetHoverHealthPatch),
+                    typeof(CorpseMineDurationPatch),
+                    typeof(CorpseAttackPatch),
+                    typeof(CorpseHoverHealthPatch),
+                    typeof(CorpseSetClickUIHealthPatch),
+                    typeof(CorpseUpdateClickUIHealthPatch),
+                    typeof(CorpseInitPatch),
+                    typeof(ShieldGeneratorTitlePatch),
+                    typeof(ShieldGeneratorDescPatch),
+                    typeof(RadarTowerInitPatch),
+                });
+            } else {
+                Logger.LogInfo("[Feature] Concrete Island Combat: DISABLED");
+            }
+
+            // ── Colored Trails ──
+            if (ModState.enableColoredTrails) {
+                Logger.LogInfo("[Feature] Colored Trails: ENABLED");
+                patchClasses.AddRange(new[] {
+                    typeof(TrailResetMaterialPatch),
+                    typeof(TrailColorButtonsPatch),
+                    typeof(TrailColorSavePatch),
+                    typeof(TrailColorLoadPatch),
+                });
+            } else {
+                Logger.LogInfo("[Feature] Colored Trails: DISABLED");
+            }
+
+            // ── Battery Gates ──
+            if (ModState.enableBatteryGates) {
+                Logger.LogInfo("[Feature] Battery Gates: ENABLED");
+                patchClasses.AddRange(new[] {
+                    typeof(StockpileGateCanAssignPatch),
+                    typeof(StockpileGateAssignPatch),
+                    typeof(StockpileGateCheckPatch),
+                    typeof(StockpileGateAssignLinePatch),
+                    typeof(StockpileGateEnumPatch),
+                    typeof(StockpileGateHologramPatch),
+                    typeof(StockpileGateWritePatch),
+                    typeof(StockpileGateReadPatch),
+                    typeof(StockpileGateLinksPatch),
+                });
+            } else {
+                Logger.LogInfo("[Feature] Battery Gates: DISABLED");
+            }
 
             foreach (var t in patchClasses)
             {
                 try { harmony.CreateClassProcessor(t).Patch(); Logger.LogInfo($"[OK] {t.Name}"); }
                 catch (Exception ex) { Logger.LogError($"[FAIL] {t.Name}: {ex.Message}"); }
             }
-            Logger.LogInfo("Colony Spire Mod loaded!");
+            Logger.LogInfo($"Colony Spire Mod loaded! ({patchClasses.Count} patches)");
         }
     }
 
@@ -127,6 +143,14 @@ namespace ColonySpireMod
         public static float islandScale = 1.0f; // Scale modifier for the first island
         public static ConditionalWeakTable<Queen, QueenData> queenData = new();
         public static QueenData GetQueen(Queen q) => queenData.GetOrCreateValue(q);
+
+        // ----------------------------------------------------------------
+        // FEATURE TOGGLES — opt-in/out from settings (all default ON)
+        // ----------------------------------------------------------------
+        public static bool enablePrestige      = true;   // Prestige system (queen tiers, spire tracks, speed, etc.)
+        public static bool enableCombat        = true;   // Concrete island combat (corpse health, shield generators, etc.)
+        public static bool enableColoredTrails = true;   // Colored Main Bus trails
+        public static bool enableBatteryGates  = true;   // Stockpile gates can target batteries
 
         // Sentinel hatching state
         public static float sentinelHatchTimer = -1f;  // -1 = idle; >0 = hatching
@@ -287,10 +311,19 @@ namespace ColonySpireMod
         const string KEY_SPIRE_TRACK = "CSP_SpireTrack";  // selected upgrade track
         const string KEY_ISLAND_SCALE = "CSP_IslandScale";
         const string KEY_MAINBUS_COLOR = "CSP_MainBusColor";
+        // Feature toggle keys
+        const string KEY_FEAT_PRESTIGE = "CSP_FeatPrestige";
+        const string KEY_FEAT_COMBAT   = "CSP_FeatCombat";
+        const string KEY_FEAT_TRAILS   = "CSP_FeatTrails";
+        const string KEY_FEAT_BATTERY  = "CSP_FeatBattery";
 
         public static void SaveSettings() {
             PlayerPrefs.SetFloat(KEY_ISLAND_SCALE, ModState.islandScale);
             PlayerPrefs.SetInt(KEY_MAINBUS_COLOR, ModState.mainBusColorIndex);
+            PlayerPrefs.SetInt(KEY_FEAT_PRESTIGE, ModState.enablePrestige ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_COMBAT,   ModState.enableCombat ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_TRAILS,   ModState.enableColoredTrails ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_BATTERY,  ModState.enableBatteryGates ? 1 : 0);
             PlayerPrefs.Save();
         }
 
@@ -332,7 +365,13 @@ namespace ColonySpireMod
             ModState.gathererLevel     = PlayerPrefs.GetInt(KEY_GATHER,   0);
             ModState.islandScale       = PlayerPrefs.GetFloat(KEY_ISLAND_SCALE, 1.0f);
             ModState.mainBusColorIndex = PlayerPrefs.GetInt(KEY_MAINBUS_COLOR, 0);
+            // Feature toggles (default = 1 = enabled)
+            ModState.enablePrestige      = PlayerPrefs.GetInt(KEY_FEAT_PRESTIGE, 1) != 0;
+            ModState.enableCombat        = PlayerPrefs.GetInt(KEY_FEAT_COMBAT,   1) != 0;
+            ModState.enableColoredTrails = PlayerPrefs.GetInt(KEY_FEAT_TRAILS,   1) != 0;
+            ModState.enableBatteryGates  = PlayerPrefs.GetInt(KEY_FEAT_BATTERY,  1) != 0;
             Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} Scale={ModState.islandScale} BusColor={ModState.mainBusColorIndex}");
+            Debug.Log($"[Spire] Features: Prestige={ModState.enablePrestige} Combat={ModState.enableCombat} Trails={ModState.enableColoredTrails} Battery={ModState.enableBatteryGates}");
         }
 
         public static int LoadQueenTier() => PlayerPrefs.GetInt(KEY_QUEENTIER, 1);
@@ -953,6 +992,30 @@ namespace ColonySpireMod
                 
                 SetupSlider(blankSetting, sliderSetting);
                 SetupColorDropdown(colorSetting);
+
+                // Feature toggles section
+                var blankSetting2 = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                if (blankSetting2 != null) blankSetting2.InitEmpty();
+
+                SetupFeatureToggle(__instance, addSettingMethod, "Prestige System",
+                    "Queen tiers, Colony Spire tracks, speed/mining/mold/wing/gatherer upgrades",
+                    () => ModState.enablePrestige,
+                    v => { ModState.enablePrestige = v; ModSave.SaveSettings(); });
+
+                SetupFeatureToggle(__instance, addSettingMethod, "Concrete Island Combat",
+                    "Corpse health bars, attack mechanics, shield generators",
+                    () => ModState.enableCombat,
+                    v => { ModState.enableCombat = v; ModSave.SaveSettings(); });
+
+                SetupFeatureToggle(__instance, addSettingMethod, "Colored Trails",
+                    "Color variants for Main Bus trails",
+                    () => ModState.enableColoredTrails,
+                    v => { ModState.enableColoredTrails = v; ModSave.SaveSettings(); });
+
+                SetupFeatureToggle(__instance, addSettingMethod, "Battery Gates",
+                    "Stockpile gates can target batteries",
+                    () => ModState.enableBatteryGates,
+                    v => { ModState.enableBatteryGates = v; ModSave.SaveSettings(); });
             } catch (Exception ex) {
                 Debug.Log($"[Spire] UISettings exception: {ex.Message}");
             }
@@ -1014,6 +1077,24 @@ namespace ColonySpireMod
                     if (textObj != null) textObj.text = "Main Bus Trail Color";
                 }
             } catch (Exception ex) { Debug.Log($"[Spire] ColorDropdown: {ex.Message}"); }
+        }
+
+        public static void SetupFeatureToggle(object settingsInstance, MethodInfo addSettingMethod,
+            string title, string description, Func<bool> getter, Action<bool> setter) {
+            try {
+                var setting = (UISettings_Setting)addSettingMethod.Invoke(settingsInstance, new object[0]);
+                if (setting == null) return;
+                setting.InitToggle(title, getter, (bool val) => {
+                    setter(val);
+                    Debug.Log($"[Spire] Feature '{title}' = {val} (requires restart for full effect)");
+                });
+                // Override header text (Loc key won't exist)
+                var headerField = AccessTools.Field(typeof(UISettings_Setting), "headerText");
+                if (headerField != null) {
+                    var textObj = headerField.GetValue(setting) as TMPro.TextMeshProUGUI;
+                    if (textObj != null) textObj.text = title;
+                }
+            } catch (Exception ex) { Debug.Log($"[Spire] Toggle '{title}': {ex.Message}"); }
         }
     }
 
