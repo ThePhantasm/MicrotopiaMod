@@ -1,7 +1,0 @@
-public enum MonumentFunction
-{
-	NONE,
-	START_NUPTIALFLIGHT,
-	REVEAL_ISLAND,
-	REVEAL_ISLAND_CHOICE
-}
