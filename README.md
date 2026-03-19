@@ -2,11 +2,13 @@
 
 ## Overview
 
-This is a massive gameplay overhaul mod for Microtopia that introduces deep endgame progression through the **Colony Spire** (repurposing the Radar Tower) and an active combat expansion. It shifts late-game focus towards generating prestige, managing specialized logistics, defeating hostile giant robots, and assembling the ultimate colony!
+This is a massive gameplay overhaul mod for Microtopia that introduces deep endgame progression through the **Colony Spire** (repurposing the Radar Tower) and an active combat expansion. It shifts late-game focus towards managing specialized logistics, defeating hostile giant robots, and assembling the ultimate colony!
+
+**Royal Jelly as the Core Resource:** The endgame economy centers entirely around Royal Jelly. It is the core currency required to fuel the Spire’s powerful upgrades and hatch Sentinels, meaning you must fully automate and scale its production.
 
 ### Major Features
 
-- **The Colony Spire:** The Radar Tower is now the core progression mechanic. Insert scaling resources (like Royal Jelly) to level up your entire colony across several different tracks:
+- **The Colony Spire:** The Radar Tower is now the core progression mechanic. Insert scaling resources to level up your entire colony across several different tracks:
   1. **Speed:** Pheromone trail speed bonuses.
   2. **Queen:** Royal mandate bonuses for faster larvae production.
   3. **Mine:** Deep mining efficiency (gather faster).
@@ -14,10 +16,11 @@ This is a massive gameplay overhaul mod for Microtopia that introduces deep endg
   5. **Wings:** Increased carry capacity for flying units.
   6. **Gatherer:** Reduced delay before dispatching ants from the Gatherer building.
   7. **Sentinel:** Direct insertion of materials to hatch ultimate defending Sentinels (vanilla recipe removed).
+- **Island Scaling:** Includes the option to scale the size of your initial starting island.
 - **Queen Tiers:** Select your Queen and press **G** (or use the UI button) to instantly cycle her output between T1, T2, and T3 larvae. No more waiting on early-game Combiners!
 - **Concrete Island Combat Overhaul:** Giant robot corpses are no longer just passive mining nodes. They have health pools, regenerate, and spawn hostile enemies! Mining them deals "melee damage." Destroying them results in a "Mega-Pinata" burst of endgame resources (Microchips, Wafers, Biofuel, Royal Jelly).
 - **Prestige System:** Launching Gynes now grants permanent prestige stars that act as a multiplier for colony power.
-- **Customizable Main Bus Trails:** Press **V** to instantly cycle your Main Bus trails through 10 vibrant, glowing colors!
+- **Customizable Main Bus Trails:** Added customizable colors for your Main Bus trails to help keep your logistics visually organized.
 
 ---
 
