@@ -18,7 +18,6 @@ This is a massive gameplay overhaul mod for Microtopia that introduces deep endg
   7. **Sentinel:** Direct insertion of materials to hatch ultimate defending Sentinels (vanilla recipe removed).
 - **Queen Tiers:** Select your Queen and press **G** (or use the UI button) to cycle her output between T1, T2, and T3 larvae. T2 larvae are produced at 1/3 the normal speed, and T3 larvae at 1/9 the normal speed. We also tweaked recipes to allow Gyne production using T2 and T3 larvae!
 - **Concrete Island Combat Overhaul:** Giant robot corpses are no longer just passive mining nodes. They have health pools, regenerate, and spawn hostile enemies! Mining them deals "melee damage." Destroying them results in a "Mega-Pinata" burst of endgame resources (Microchips, Wafers, Biofuel, Royal Jelly).
-- **Prestige System:** Launching Gynes now grants permanent prestige stars that act as a multiplier for colony power.
 
 ### Minor Features
 
