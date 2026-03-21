@@ -23,12 +23,15 @@ namespace ColonySpireMod
             // Build the patch list based on feature toggles
             var patchClasses = new List<Type>();
 
-            // ── Always-on: Settings UI, Island Scale, Save persistence ──
+            // ── Always-on: Settings UI, Island Scale, Save persistence, Localization ──
             patchClasses.AddRange(new[] {
                 typeof(GroundInitShapePatch),
                 typeof(GroundCreatePatch),
                 typeof(UISettingsWorldPatch),
                 typeof(UIWorldSettingsInitPatch),
+                typeof(ModLocPatch),
+                typeof(IslandScaleSavePatch),
+                typeof(IslandScaleLoadPatch),
             });
 
             // ── Prestige System ──
@@ -140,7 +143,8 @@ namespace ColonySpireMod
         public static int energyLevel = 0;      // Track 7: Energy efficiency
         public static int gathererLevel = 0;    // Track 8: Gatherer speed (max 5)
         public static int displayTier = 1;
-        public static float islandScale = 1.0f; // Scale modifier for the first island
+        public static float islandScale = 1.0f; // Scale modifier for the first island (settings UI)
+        public static float activeIslandScale = 1.0f; // Scale modifier currently in use
         public static ConditionalWeakTable<Queen, QueenData> queenData = new();
         public static QueenData GetQueen(Queen q) => queenData.GetOrCreateValue(q);
 
@@ -200,6 +204,11 @@ namespace ColonySpireMod
         public static string GetTrailColorPath(string saveName) {
             var saveDir = System.IO.Path.GetDirectoryName(Files.GameSave(saveName, false));
             return System.IO.Path.Combine(saveDir, saveName + ".trailcolors");
+        }
+
+        public static string GetIslandScalePath(string saveName) {
+            var saveDir = System.IO.Path.GetDirectoryName(Files.GameSave(saveName, false));
+            return System.IO.Path.Combine(saveDir, saveName + ".islandscale");
         }
 
         public static readonly string[] TrackNames = { "Speed", "Queen", "Mine", "Mold", "Wings", "Sentinel", "Energy", "Gather" };
@@ -285,6 +294,50 @@ namespace ColonySpireMod
                 case 7: if (gathererLevel < 5) gathererLevel++; break;
             }
             if (t != 5) Debug.Log($"[Spire] Upgraded {GetTrackName(t)} -> Lv{GetTrackLevel(t)}");
+        }
+
+        // ----------------------------------------------------------------
+        // TECH TREE GATING — check if our custom research nodes are done
+        // These tech codes are injected into techtree.fods by patch_techtree.ps1
+        //
+        // IMPORTANT: The tech tree UI uses Unity prefab boxes — we can't inject
+        // new visual nodes.  Our MOD_* techs have no clickable UI box, so they
+        // will never be purchased by the player.  Instead we auto-unlock them
+        // the moment their prerequisite techs are researched (status == OPEN).
+        // The research costs on the nodes serve as documentation only; the real
+        // gate is the prerequisite tech chain.
+        // ----------------------------------------------------------------
+        public static bool ModTechResearched(string techCode) {
+            try {
+                var tech = Tech.Get(techCode, "");
+                if (tech == null) return true; // fail-open if tech not found
+
+                var status = tech.GetStatus();
+                if (status == TechStatus.DONE) return true;
+
+                // Auto-unlock: if prerequisites are met (OPEN), unlock it now
+                if (status == TechStatus.OPEN) {
+                    tech.Unlock(during_load: false);
+                    Debug.Log($"[Spire] Auto-unlocked mod tech: {techCode}");
+                    return true;
+                }
+
+                return false; // prerequisites not yet met
+            } catch {
+                return true; // fail-open on any error
+            }
+        }
+
+        public static bool CanQueenT2 => ModTechResearched("MOD_QUEEN_T2");
+        public static bool CanQueenT3 => ModTechResearched("MOD_QUEEN_T3");
+        public static bool CanColoredTrails => ModTechResearched("MOD_COLORED_TRAILS");
+
+        public static int MaxQueenTier {
+            get {
+                if (CanQueenT3) return 3;
+                if (CanQueenT2) return 2;
+                return 1;
+            }
         }
     }
     public class QueenData {
@@ -378,6 +431,33 @@ namespace ColonySpireMod
     }
 
     // ================================================================
+    // LOCALIZATION — inject English strings for our custom tech nodes
+    // so they don't show as "?TECHTREE_MOD_QUEEN_T2?"
+    // ================================================================
+    [HarmonyPatch(typeof(Loc), "GetTechTree")]
+    public static class ModLocPatch {
+        static readonly Dictionary<string, string> modStrings = new() {
+            { "TECHTREE_MOD_QUEEN_T2",            "Queen Larvae T2" },
+            { "TECHTREE_MOD_QUEEN_T2_DESC",       "The Queen can now produce T2 Soldier larvae. Press G while viewing the Queen to cycle tiers." },
+            { "TECHTREE_MOD_QUEEN_T3",            "Queen Larvae T3" },
+            { "TECHTREE_MOD_QUEEN_T3_DESC",       "The Queen can now produce T3 Royal larvae. Press G while viewing the Queen to cycle tiers." },
+            { "TECHTREE_MOD_COLORED_TRAILS",      "Colored Trails" },
+            { "TECHTREE_MOD_COLORED_TRAILS_DESC", "Unlock vibrant color options for Main Bus trails. Choose from Cyan, Magenta, Lime, Orange, and Blue variants." },
+            { "TECHTREE_MOD_COLONY_SPIRE",        "Colony Spire" },
+            { "TECHTREE_MOD_COLONY_SPIRE_DESC",   "Unlock the Colony Spire, a powerful endgame building that provides permanent colony-wide upgrades and can hatch Sentinels." },
+        };
+
+        [HarmonyPrefix]
+        static bool Prefix(string code, ref string __result) {
+            if (modStrings.TryGetValue(code, out var text)) {
+                __result = text;
+                return false; // skip original Loc lookup
+            }
+            return true; // let vanilla handle it
+        }
+    }
+
+    // ================================================================
     // PRESTIGE + SPEED
     // ================================================================
     [HarmonyPatch(typeof(GyneTower), "StartGyne")]
@@ -400,10 +480,14 @@ namespace ColonySpireMod
 
         [HarmonyPrefix] static void Prefix(Queen __instance) {
             var qd = ModState.GetQueen(__instance);
+            // Clamp saved tier to max allowed (in case research was un-done or save is from older version)
+            int maxTier = ModState.MaxQueenTier;
+            if (qd.larvaOutputTier > maxTier) qd.larvaOutputTier = maxTier;
             activeTier = qd.larvaOutputTier; // expose to SpawnPickupPatch
             ModState.displayTier = qd.larvaOutputTier;
             if (Input.GetKeyDown(KeyCode.G)) {
-                qd.larvaOutputTier = (qd.larvaOutputTier % 3) + 1;
+                // Cycle within allowed tiers: 1→2→...→maxTier→1
+                qd.larvaOutputTier = (qd.larvaOutputTier % maxTier) + 1;
                 activeTier = qd.larvaOutputTier;
             }
         }
@@ -425,7 +509,11 @@ namespace ColonySpireMod
         static readonly string[] Labels = { "T1 Worker", "T2 Soldier", "T3 Royal" };
         [HarmonyPostfix] static void Postfix(Queen __instance, UIClickLayout __0) {
             var qd = ModState.GetQueen(__instance);
-            __0.SetTitle(__instance.data.GetTitle() + $" [T{qd.larvaOutputTier}] ★{ModState.prestigeLevel}");
+            int maxTier = ModState.MaxQueenTier;
+            // Clamp tier to what's unlocked
+            if (qd.larvaOutputTier > maxTier) qd.larvaOutputTier = maxTier;
+            string tierInfo = maxTier > 1 ? $" [T{qd.larvaOutputTier}]" : "";
+            __0.SetTitle(__instance.data.GetTitle() + tierInfo + $" ★{ModState.prestigeLevel}");
             try {
                 var btn = __0.GetButton((UIClickButtonType)50, false); // Generic1
 
@@ -435,15 +523,22 @@ namespace ColonySpireMod
                 }
 
                 if (btn != null) {
-                    // Wire click: cycle T1→T2→T3→T1
-                    btn.SetButton(() => {
-                        qd.larvaOutputTier = (qd.larvaOutputTier % 3) + 1;
-                        ModSave.Save(qd.larvaOutputTier);
-                        __0.SetTitle(__instance.data.GetTitle() + $" [T{qd.larvaOutputTier}] ★{ModState.prestigeLevel}");
+                    if (maxTier <= 1) {
+                        // Only T1 unlocked — hide the button entirely
+                        __0.UpdateButton((UIClickButtonType)50, false, "", false);
+                    } else {
+                        // Wire click: cycle T1→T2→...→maxTier→T1
+                        btn.SetButton(() => {
+                            int mt = ModState.MaxQueenTier;
+                            qd.larvaOutputTier = (qd.larvaOutputTier % mt) + 1;
+                            ModSave.Save(qd.larvaOutputTier);
+                            string ti = $" [T{qd.larvaOutputTier}]";
+                            __0.SetTitle(__instance.data.GetTitle() + ti + $" ★{ModState.prestigeLevel}");
+                            __0.UpdateButton((UIClickButtonType)50, true, Labels[qd.larvaOutputTier - 1], true);
+                        }, (InputAction)0);
+                        // Show with current tier label
                         __0.UpdateButton((UIClickButtonType)50, true, Labels[qd.larvaOutputTier - 1], true);
-                    }, (InputAction)0);
-                    // Show with current tier label
-                    __0.UpdateButton((UIClickButtonType)50, true, Labels[qd.larvaOutputTier - 1], true);
+                    }
                     Debug.Log($"[Spire] Queen tier button active: T{qd.larvaOutputTier}");
                 } else {
                     Debug.LogWarning("[Spire] Queen tier button: could not create or find button");
@@ -783,9 +878,15 @@ namespace ColonySpireMod
     public static class AutoUnlockPatch {
         [HarmonyPostfix] static void Postfix() {
             try {
-                Progress.UnlockBuilding("COLONY_SPIRE", true);
+                // Colony Spire is now unlocked via the tech tree (MOD_COLONY_SPIRE node)
+                // Only auto-unlock if the tech has been researched
+                if (ModState.ModTechResearched("MOD_COLONY_SPIRE")) {
+                    Progress.UnlockBuilding("COLONY_SPIRE", true);
+                    Debug.Log("[Spire] Colony Spire unlocked (tech researched)");
+                } else {
+                    Debug.Log("[Spire] Colony Spire locked — research MOD_COLONY_SPIRE first");
+                }
                 ModSave.Load();  // restore prestige + track levels
-                Debug.Log("[Spire] Building auto-unlocked, state loaded");
             }
             catch (Exception ex) { Debug.Log($"[Spire] Auto-unlock: {ex.Message}"); }
         }
@@ -926,7 +1027,7 @@ namespace ColonySpireMod
         static void Prefix(Ground __instance) {
             if (GameManager.instance == null) return;
             // Only apply scale if it's the very first ground (initial island)
-            if (GameManager.instance.GetGroundCount() == 0 && ModState.islandScale != 1.0f) {
+            if (GameManager.instance.GetGroundCount() == 0 && ModState.activeIslandScale != 1.0f) {
                 var stField = AccessTools.Field(typeof(Ground), "shapeTransform");
                 if (stField == null) return;
                 var shapeTransform = stField.GetValue(__instance) as Transform;
@@ -938,8 +1039,8 @@ namespace ColonySpireMod
                 for (int i=0; i < colliders.Length; i++) {
                     origRadii[i] = colliders[i].radius;
                     origCenters[i] = colliders[i].center;
-                    colliders[i].radius *= ModState.islandScale;
-                    colliders[i].center *= ModState.islandScale;
+                    colliders[i].radius *= ModState.activeIslandScale;
+                    colliders[i].center *= ModState.activeIslandScale;
                 }
             }
         }
@@ -969,8 +1070,50 @@ namespace ColonySpireMod
         static void Postfix(Ground __result) {
             // Target the cloned instance for the local scale
             if (__result != null && GameManager.instance != null && GameManager.instance.GetGroundCount() == 0) {
-                __result.transform.localScale = Vector3.one * ModState.islandScale;
-                Debug.Log($"[Spire] Scaled initial island to {ModState.islandScale}");
+                __result.transform.localScale = Vector3.one * ModState.activeIslandScale;
+                Debug.Log($"[Spire] Scaled initial island to {ModState.activeIslandScale}");
+            }
+        }
+    }
+
+    // ================================================================
+    // ISLAND SCALE SAVE/LOAD
+    // ================================================================
+    [HarmonyPatch(typeof(GameManager), "SaveGame")]
+    public static class IslandScaleSavePatch {
+        [HarmonyPostfix]
+        static void Postfix(bool __result, string save_name) {
+            if (!__result) return;
+            try {
+                string path = ModState.GetIslandScalePath(save_name);
+                System.IO.File.WriteAllText(path, ModState.activeIslandScale.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            } catch (Exception ex) {
+                Debug.Log($"[Spire] IslandScale save failed: {ex}");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(GameManager), "KStartLoadGame")]
+    public static class IslandScaleLoadPatch {
+        [HarmonyPrefix]
+        static void Prefix(string save_name) {
+            // save_name is empty when creating a new game
+            if (string.IsNullOrEmpty(save_name)) {
+                ModState.activeIslandScale = ModState.islandScale;
+                return;
+            }
+            try {
+                string path = ModState.GetIslandScalePath(save_name);
+                if (System.IO.File.Exists(path)) {
+                    if (float.TryParse(System.IO.File.ReadAllText(path), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float scale)) {
+                        ModState.activeIslandScale = scale;
+                        return;
+                    }
+                }
+                ModState.activeIslandScale = 1.0f; // Vanilla save or created before mod scale feature
+            } catch (Exception ex) {
+                Debug.Log($"[Spire] IslandScale load failed: {ex}");
+                ModState.activeIslandScale = 1.0f;
             }
         }
     }
@@ -1161,6 +1304,8 @@ namespace ColonySpireMod
         [HarmonyPostfix]
         static void Postfix(Trail __instance) {
             if (__instance.trailType != TrailType.MAIN) return;
+            // Gate: colored trails require MOD_COLORED_TRAILS research
+            if (!ModState.CanColoredTrails) return;
             try {
                 // Stamp this trail with a color if it doesn't have one yet
                 int colorIdx = ModState.GetTrailColorIndex(__instance);
@@ -1236,6 +1381,8 @@ namespace ColonySpireMod
             try {
                 // Only add color buttons when a MAIN-family trail is selected
                 if (selected_trail == TrailType.NONE) return;
+                // Gate: colored trails require MOD_COLORED_TRAILS research
+                if (!ModState.CanColoredTrails) return;
                 TrailData selectedData = TrailData.Get(selected_trail);
                 if (selectedData == null) return;
 
