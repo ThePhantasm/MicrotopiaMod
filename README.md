@@ -63,3 +63,13 @@ To safely remove the mod, safely run the `uninstall.ps1` script to restore your 
 ## Technical Notes
 - **Save Compatibility:** Mod State (Prestige level, Spire upgrades, Queen tiers) is safely saved natively using Unity's `PlayerPrefs` and will persist exactly as you left it across your saves.
 - **Dynamic Hooking:** All C# logic acts at runtime using Harmony IL patches (and Mono.Cecil for data sheets), meaning base game methods are carefully wrapped rather than destroyed!
+
+---
+
+## Changelog
+
+### v1.0.1 *(patch)*
+- **Fixed:** Island scale setting was incorrectly applied when loading an existing save that was created with a different scale (or no scale at all). The scale is now saved as a per-save sidecar file (`.islandscale`) and loaded back on game load. Old saves without a sidecar default to `1.0` so they are never retroactively resized.
+
+### v1.0.0
+- Initial release.

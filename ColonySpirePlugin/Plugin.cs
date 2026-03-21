@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace ColonySpireMod
 {
-    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.0.0")]
+    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.0.1")]
     public class ColonySpirePlugin : BaseUnityPlugin
     {
         void Awake()
