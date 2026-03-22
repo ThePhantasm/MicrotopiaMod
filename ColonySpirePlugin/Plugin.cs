@@ -1,19 +1,25 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using BepInEx;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace ColonySpireMod
 {
-    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.0.1")]
+    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.0")]
     public class ColonySpirePlugin : BaseUnityPlugin
     {
+        public static BepInEx.Logging.ManualLogSource Log;
+
         void Awake()
         {
+            Log = Logger;
             Logger.LogInfo("Colony Spire Mod loading...");
             var harmony = new Harmony("com.colonyspire.mod");
 
@@ -23,74 +29,108 @@ namespace ColonySpireMod
             // Build the patch list based on feature toggles
             var patchClasses = new List<Type>();
 
-            // ── Always-on: Settings UI, Island Scale, Save persistence, Localization ──
+            // ── Always-on: Settings UI (must always load so players can toggle features) ──
             patchClasses.AddRange(new[] {
-                typeof(GroundInitShapePatch),
-                typeof(GroundCreatePatch),
                 typeof(UISettingsWorldPatch),
                 typeof(UIWorldSettingsInitPatch),
-                typeof(ModLocPatch),
-                typeof(IslandScaleSavePatch),
-                typeof(IslandScaleLoadPatch),
             });
 
-            // ── Prestige System ──
-            if (ModState.enablePrestige) {
-                Logger.LogInfo("[Feature] Prestige System: ENABLED");
+            // ── Colony Spire Mod (master toggle) ──
+            if (ModState.enableColonySpire) {
+                Logger.LogInfo("[Master] Colony Spire Mod: ENABLED");
+
+                // Core mod infrastructure: Island Scale, Save persistence, Localization
                 patchClasses.AddRange(new[] {
-                    typeof(PrestigePatch),
-                    typeof(SpeedPatch),
-                    typeof(QueenBuildingUpdatePatch),
-                    typeof(QueenSetClickUiPatch),
-                    typeof(QueenInitPatch),
-                    typeof(SpawnPickupPatch),
-                    typeof(SpireInitPatch),
-                    typeof(SpireBuildingUpdatePatch),
-                    typeof(SpireClickTypePatch),
-                    typeof(UnlockerSetUnlockPatch),
-                    typeof(UnlockerPickUnlockPatch),
-                    typeof(UnlockerAnythingToUnlockPatch),
-                    typeof(UnlockerGetAvailableCountPatch),
-                    typeof(UnlockerEAvailablePatch),
-                    typeof(UnlockerCanInsertPatch),
-                    typeof(UnlockerDoUnlockPatch),
-                    typeof(UnlockerGatherProgressPatch),
-                    typeof(SetUnlockNamePatch),
-                    typeof(SetChangeButtonOverridePatch),
-                    typeof(SaveOnWritePatch),
-                    typeof(AutoUnlockPatch),
-                    typeof(MoldResistancePatch),
-                    typeof(MiningSpeedPatch),
-                    typeof(WingCarryPatch),
-                    typeof(LarvaRateHudPatch),
-                    typeof(GathererDelayPatch),
+                    typeof(GroundInitShapePatch),
+                    typeof(GroundCreatePatch),
+                    typeof(ModLocPatch),
+                    typeof(IslandScaleSavePatch),
+                    typeof(IslandScaleLoadPatch),
                 });
+
+                // ── Prestige System ──
+                if (ModState.enablePrestige) {
+                    Logger.LogInfo("[Feature] Prestige System: ENABLED");
+                    patchClasses.AddRange(new[] {
+                        typeof(PrestigePatch),
+                        typeof(SpeedPatch),
+                        typeof(QueenBuildingUpdatePatch),
+                        typeof(QueenSetClickUiPatch),
+                        typeof(QueenInitPatch),
+                        typeof(SpawnPickupPatch),
+                        typeof(SpireInitPatch),
+                        typeof(SpireBuildingUpdatePatch),
+                        typeof(SpireClickTypePatch),
+                        typeof(UnlockerSetUnlockPatch),
+                        typeof(UnlockerPickUnlockPatch),
+                        typeof(UnlockerAnythingToUnlockPatch),
+                        typeof(UnlockerGetAvailableCountPatch),
+                        typeof(UnlockerEAvailablePatch),
+                        typeof(UnlockerCanInsertPatch),
+                        typeof(UnlockerDoUnlockPatch),
+                        typeof(UnlockerGatherProgressPatch),
+                        typeof(SetUnlockNamePatch),
+                        typeof(SetChangeButtonOverridePatch),
+                        typeof(SaveOnWritePatch),
+                        typeof(AutoUnlockPatch),
+                        typeof(MoldResistancePatch),
+                        typeof(MiningSpeedPatch),
+                        typeof(WingCarryPatch),
+                        typeof(GyneTowerPrestigePatch),
+                        typeof(LarvaRateHudPatch),
+                        typeof(GathererDelayPatch),
+                        // Phase 2: Island Furnace
+                        typeof(FurnaceCanInsertPatch),
+                        typeof(FurnaceOnArrivalPatch),
+                        typeof(FurnaceTitlePatch),
+                        typeof(FurnaceHoverPatch),
+                        // Phase 3: Custom Buildings
+                        typeof(BuildingDataGetPatch),
+                        typeof(CustomBuildingLocPatch),
+                    });
+                } else {
+                    Logger.LogInfo("[Feature] Prestige System: DISABLED");
+                }
+
+                // ── Concrete Island Combat ──
+                if (ModState.enableCombat) {
+                    Logger.LogInfo("[Feature] Concrete Island Combat: ENABLED");
+                    patchClasses.AddRange(new[] {
+                        typeof(CorpseSetHoverHealthPatch),
+                        typeof(CorpseMineDurationPatch),
+                        typeof(CorpseAttackPatch),
+                        typeof(CorpseHoverHealthPatch),
+                        typeof(CorpseSetClickUIHealthPatch),
+                        typeof(CorpseUpdateClickUIHealthPatch),
+                        typeof(CorpseInitPatch),
+                        typeof(ShieldGeneratorTitlePatch),
+                        typeof(ShieldGeneratorDescPatch),
+                        typeof(RadarTowerInitPatch),
+                    });
+                } else {
+                    Logger.LogInfo("[Feature] Concrete Island Combat: DISABLED");
+                }
             } else {
-                Logger.LogInfo("[Feature] Prestige System: DISABLED");
+                Logger.LogInfo("[Master] Colony Spire Mod: DISABLED (bugfix-only mode)");
             }
 
-            // ── Concrete Island Combat ──
-            if (ModState.enableCombat) {
-                Logger.LogInfo("[Feature] Concrete Island Combat: ENABLED");
+            // ── Vanilla improvements (independent of Colony Spire) ──
+
+            // Divider Save Fix
+            if (ModState.enableDividerFix) {
+                Logger.LogInfo("[Improvement] Divider Save Fix: ENABLED");
                 patchClasses.AddRange(new[] {
-                    typeof(CorpseSetHoverHealthPatch),
-                    typeof(CorpseMineDurationPatch),
-                    typeof(CorpseAttackPatch),
-                    typeof(CorpseHoverHealthPatch),
-                    typeof(CorpseSetClickUIHealthPatch),
-                    typeof(CorpseUpdateClickUIHealthPatch),
-                    typeof(CorpseInitPatch),
-                    typeof(ShieldGeneratorTitlePatch),
-                    typeof(ShieldGeneratorDescPatch),
-                    typeof(RadarTowerInitPatch),
+                    typeof(DividerSortFixPatch),
+                    typeof(DividerSaveFixPatch),
+                    typeof(DividerLoadFixPatch),
                 });
             } else {
-                Logger.LogInfo("[Feature] Concrete Island Combat: DISABLED");
+                Logger.LogInfo("[Improvement] Divider Save Fix: DISABLED");
             }
 
-            // ── Colored Trails ──
+            // Colored Trails
             if (ModState.enableColoredTrails) {
-                Logger.LogInfo("[Feature] Colored Trails: ENABLED");
+                Logger.LogInfo("[Improvement] Colored Trails: ENABLED");
                 patchClasses.AddRange(new[] {
                     typeof(TrailResetMaterialPatch),
                     typeof(TrailColorButtonsPatch),
@@ -98,12 +138,12 @@ namespace ColonySpireMod
                     typeof(TrailColorLoadPatch),
                 });
             } else {
-                Logger.LogInfo("[Feature] Colored Trails: DISABLED");
+                Logger.LogInfo("[Improvement] Colored Trails: DISABLED");
             }
 
-            // ── Battery Gates ──
+            // Stockpile Gates → Battery
             if (ModState.enableBatteryGates) {
-                Logger.LogInfo("[Feature] Battery Gates: ENABLED");
+                Logger.LogInfo("[Improvement] Stockpile Gate Battery Target: ENABLED");
                 patchClasses.AddRange(new[] {
                     typeof(StockpileGateCanAssignPatch),
                     typeof(StockpileGateAssignPatch),
@@ -116,7 +156,7 @@ namespace ColonySpireMod
                     typeof(StockpileGateLinksPatch),
                 });
             } else {
-                Logger.LogInfo("[Feature] Battery Gates: DISABLED");
+                Logger.LogInfo("[Improvement] Stockpile Gate Battery Target: DISABLED");
             }
 
             foreach (var t in patchClasses)
@@ -145,6 +185,51 @@ namespace ColonySpireMod
         public static int displayTier = 1;
         public static float islandScale = 1.0f; // Scale modifier for the first island (settings UI)
         public static float activeIslandScale = 1.0f; // Scale modifier currently in use
+
+        // ── Phase 2 Endgame ──
+        public static int prestigePoints = 0;      // Accumulated prestige points toward next Super Gyne launch
+        public static int excavationCores = 0;     // Cores from combat kills, fuel for the Deep Excavator
+
+        // T4 Omni-Ant caste ID — we repurpose an unused AntCaste value
+        // The queen produces T3 larvae (caste 402); the High-End Assembler will
+        // eventually convert them, but for now we detect T4 via a flag on the ant.
+        // For initial implementation, we detect T3 ants that have been "promoted"
+        // by checking a tag.  Long-term this becomes a real caste in prefabs.fods.
+        public const int OMNI_ANT_CASTE_ID = 10;  // placeholder for T4 caste enum value
+
+        // Points per elder Omni-Ant sacrificed
+        public const int PRESTIGE_POINTS_PER_OMNI = 10;
+
+        /// <summary>Returns the prestige points threshold for the current prestige level.</summary>
+        public static int GetPrestigeThreshold() {
+            return prestigeLevel switch {
+                0 => 20,    // Level 0→1
+                1 => 50,    // Level 1→2
+                2 => 100,   // Level 2→3
+                3 => 200,   // Level 3→4
+                4 => 350,   // Level 4→5
+                5 => 500,   // Level 5→6
+                _ => 500 + (prestigeLevel - 5) * 200  // +200 each after 6
+            };
+        }
+
+        /// <summary>Returns the T4 Omni-Ant carry capacity (base 2, +1 per 2 prestige levels).</summary>
+        public static int GetOmniAntCarry() => 2 + (prestigeLevel / 2);
+
+        // Island Furnace: once enabled, all BatteryBuildings accept any material
+        public static bool furnaceEnabled => prestigeLevel >= 1;
+        public const float FURNACE_ENERGY_PER_ITEM = 5f;
+
+        // Deep Excavator: spawns resource deposits using energy + cores
+        public const float EXCAVATOR_ENERGY_COST = 50f;
+        public const int   EXCAVATOR_CORE_COST   = 5;
+        public const float EXCAVATOR_INTERVAL     = 60f; // seconds between excavation attempts
+
+        // Known mineable resource codes from the game
+        public static readonly string[] MineableResources = {
+            "BOB_DIRT", "BOB_STONE", "BOB_IRON", "BOB_COPPER",
+            "BOB_RESIN", "BOB_SAND", "BOB_CRYSTAL"
+        };
         public static ConditionalWeakTable<Queen, QueenData> queenData = new();
         public static QueenData GetQueen(Queen q) => queenData.GetOrCreateValue(q);
 
@@ -155,6 +240,8 @@ namespace ColonySpireMod
         public static bool enableCombat        = true;   // Concrete island combat (corpse health, shield generators, etc.)
         public static bool enableColoredTrails = true;   // Colored Main Bus trails
         public static bool enableBatteryGates  = true;   // Stockpile gates can target batteries
+        public static bool enableDividerFix    = true;   // Fix vanilla divider save/load bug
+        public static bool enableColonySpire   = true;   // Master toggle for all Colony Spire mod content
 
         // Sentinel hatching state
         public static float sentinelHatchTimer = -1f;  // -1 = idle; >0 = hatching
@@ -364,11 +451,16 @@ namespace ColonySpireMod
         const string KEY_SPIRE_TRACK = "CSP_SpireTrack";  // selected upgrade track
         const string KEY_ISLAND_SCALE = "CSP_IslandScale";
         const string KEY_MAINBUS_COLOR = "CSP_MainBusColor";
+        // Phase 2 endgame keys
+        const string KEY_PRESTIGE_PTS  = "CSP_PrestigePoints";
+        const string KEY_EXCAV_CORES   = "CSP_ExcavCores";
         // Feature toggle keys
         const string KEY_FEAT_PRESTIGE = "CSP_FeatPrestige";
         const string KEY_FEAT_COMBAT   = "CSP_FeatCombat";
         const string KEY_FEAT_TRAILS   = "CSP_FeatTrails";
         const string KEY_FEAT_BATTERY  = "CSP_FeatBattery";
+        const string KEY_FEAT_DIVIDER  = "CSP_FeatDividerFix";
+        const string KEY_FEAT_MASTER   = "CSP_FeatMaster";
 
         public static void SaveSettings() {
             PlayerPrefs.SetFloat(KEY_ISLAND_SCALE, ModState.islandScale);
@@ -377,6 +469,8 @@ namespace ColonySpireMod
             PlayerPrefs.SetInt(KEY_FEAT_COMBAT,   ModState.enableCombat ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_TRAILS,   ModState.enableColoredTrails ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_BATTERY,  ModState.enableBatteryGates ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_DIVIDER,  ModState.enableDividerFix ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_MASTER,   ModState.enableColonySpire ? 1 : 0);
             PlayerPrefs.Save();
         }
 
@@ -401,9 +495,12 @@ namespace ColonySpireMod
             PlayerPrefs.SetInt(KEY_SENTINEL, ModState.sentinelHatched);
             PlayerPrefs.SetInt(KEY_ENERGY,   ModState.energyLevel);
             PlayerPrefs.SetInt(KEY_GATHER,   ModState.gathererLevel);
+            // Phase 2 endgame
+            PlayerPrefs.SetInt(KEY_PRESTIGE_PTS, ModState.prestigePoints);
+            PlayerPrefs.SetInt(KEY_EXCAV_CORES,  ModState.excavationCores);
             if (queenTier >= 1) PlayerPrefs.SetInt(KEY_QUEENTIER, queenTier);
             PlayerPrefs.Save();
-            Debug.Log($"[Spire] Saved — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Q{ModState.royalMandateLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel}");
+            Debug.Log($"[Spire] Saved — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Q{ModState.royalMandateLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores}");
         }
 
         public static void Load() {
@@ -416,6 +513,9 @@ namespace ColonySpireMod
             ModState.sentinelHatched   = PlayerPrefs.GetInt(KEY_SENTINEL, 0);
             ModState.energyLevel       = PlayerPrefs.GetInt(KEY_ENERGY,   0);
             ModState.gathererLevel     = PlayerPrefs.GetInt(KEY_GATHER,   0);
+            // Phase 2 endgame
+            ModState.prestigePoints    = PlayerPrefs.GetInt(KEY_PRESTIGE_PTS, 0);
+            ModState.excavationCores   = PlayerPrefs.GetInt(KEY_EXCAV_CORES,  0);
             ModState.islandScale       = PlayerPrefs.GetFloat(KEY_ISLAND_SCALE, 1.0f);
             ModState.mainBusColorIndex = PlayerPrefs.GetInt(KEY_MAINBUS_COLOR, 0);
             // Feature toggles (default = 1 = enabled)
@@ -423,7 +523,9 @@ namespace ColonySpireMod
             ModState.enableCombat        = PlayerPrefs.GetInt(KEY_FEAT_COMBAT,   1) != 0;
             ModState.enableColoredTrails = PlayerPrefs.GetInt(KEY_FEAT_TRAILS,   1) != 0;
             ModState.enableBatteryGates  = PlayerPrefs.GetInt(KEY_FEAT_BATTERY,  1) != 0;
-            Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} Scale={ModState.islandScale} BusColor={ModState.mainBusColorIndex}");
+            ModState.enableDividerFix    = PlayerPrefs.GetInt(KEY_FEAT_DIVIDER,  1) != 0;
+            ModState.enableColonySpire   = PlayerPrefs.GetInt(KEY_FEAT_MASTER,   1) != 0;
+            Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores} Scale={ModState.islandScale}");
             Debug.Log($"[Spire] Features: Prestige={ModState.enablePrestige} Combat={ModState.enableCombat} Trails={ModState.enableColoredTrails} Battery={ModState.enableBatteryGates}");
         }
 
@@ -460,9 +562,16 @@ namespace ColonySpireMod
     // ================================================================
     // PRESTIGE + SPEED
     // ================================================================
+    // Prestige is now handled by the Gyne Tower accumulator (GyneTowerPrestigePatch).
+    // StartGyne still fires naturally when the nuptial flight is triggered there.
+    // We keep this patch but make it a no-op so vanilla prestige doesn't double-count.
     [HarmonyPatch(typeof(GyneTower), "StartGyne")]
     public static class PrestigePatch {
-        [HarmonyPostfix] static void Postfix() { ModState.prestigeLevel++; }
+        [HarmonyPostfix] static void Postfix() {
+            // Phase 2: prestige level is incremented in GyneTowerPrestigePatch instead.
+            // This postfix intentionally left empty to prevent double-counting.
+            Debug.Log($"[Spire] StartGyne fired — prestige level is {ModState.prestigeLevel}");
+        }
     }
     [HarmonyPatch(typeof(Ant), "GetSpeed")]
     public static class SpeedPatch {
@@ -513,7 +622,8 @@ namespace ColonySpireMod
             // Clamp tier to what's unlocked
             if (qd.larvaOutputTier > maxTier) qd.larvaOutputTier = maxTier;
             string tierInfo = maxTier > 1 ? $" [T{qd.larvaOutputTier}]" : "";
-            __0.SetTitle(__instance.data.GetTitle() + tierInfo + $" ★{ModState.prestigeLevel}");
+            string prestigeInfo = $" ★{ModState.prestigeLevel} [{ModState.prestigePoints}/{ModState.GetPrestigeThreshold()}] 🛡{ModState.excavationCores}";
+            __0.SetTitle(__instance.data.GetTitle() + tierInfo + prestigeInfo);
             try {
                 var btn = __0.GetButton((UIClickButtonType)50, false); // Generic1
 
@@ -654,6 +764,14 @@ namespace ColonySpireMod
                     r.material.SetColor("_EmissionColor", new Color(1.8f, 1.3f, 0.0f, 1f));
                     r.material.EnableKeyword("_EMISSION");
                 }
+
+                // Phase 2: Attach Deep Excavator behavior
+                if (__instance.gameObject.GetComponent<DeepExcavatorBehavior>() == null) {
+                    var excavator = __instance.gameObject.AddComponent<DeepExcavatorBehavior>();
+                    excavator.spireBuilding = __instance;
+                    Debug.Log("[Spire] Deep Excavator attached to Colony Spire");
+                }
+
                 Debug.Log("[Spire] Init done");
             } catch (Exception ex) { Debug.Log($"[Spire] Init failed: {ex.Message}"); }
         }
@@ -946,12 +1064,122 @@ namespace ColonySpireMod
     [HarmonyPatch(typeof(Ant), "Fill")]
     public static class WingCarryPatch {
         [HarmonyPostfix] static void Postfix(Ant __instance, AntCasteData _data) {
-            if (ModState.wingLevel <= 0 || _data == null) return;
+            if (_data == null) return;
+
+            // ── T4 Omni-Ant Stats ──
+            // For now, T4 is detected by caste ID matching OMNI_ANT_CASTE_ID.
+            // Until we have a real T4 caste in prefabs.fods, we can test by manually
+            // spawning via console: SpawnAnt((AntCaste)10, pos, rot, null)
+            if ((int)_data.caste == ModState.OMNI_ANT_CASTE_ID) {
+                var carryField = AccessTools.Field(typeof(Ant), "carryCapacity");
+                var speedField = AccessTools.Field(typeof(Ant), "speed");
+
+                // Carry: base 2, scaling with prestige
+                carryField?.SetValue(__instance, ModState.GetOmniAntCarry());
+
+                // Speed: 2x base
+                if (speedField != null) {
+                    float baseSpeed = (float)speedField.GetValue(__instance);
+                    speedField.SetValue(__instance, baseSpeed * 2.0f);
+                }
+
+                // Lifespan: 600 seconds (10 minutes)
+                __instance.energy = 600f;
+
+                // Flight: enable
+                var flyField = AccessTools.Field(typeof(Ant), "canFly");
+                flyField?.SetValue(__instance, true);
+
+                Debug.Log($"[Spire] T4 Omni-Ant spawned! Carry={ModState.GetOmniAntCarry()} Speed=2x Lifespan=600s Fly=true");
+                return; // don't also apply wing carry below
+            }
+
+            // ── Original Wing Carry Logic (flying ants only) ──
+            if (ModState.wingLevel <= 0) return;
             if (!_data.flying) return;
             var field = AccessTools.Field(typeof(Ant), "carryCapacity");
             int current = (int)field.GetValue(__instance);
             field.SetValue(__instance, current + ModState.wingLevel);
             Debug.Log($"[Spire] WingCarry: {_data.caste} carry {current} -> {current + ModState.wingLevel}");
+        }
+    }
+
+    // ================================================================
+    // PHASE 2: T4 OMNI-ANT — Mining Speed Override
+    // BiomeObject.GetMineDuration is already patched by MiningSpeedPatch,
+    // but T4 ants get an addtional 3x mining speed multiplier.
+    // We detect the ant that's mining by checking the calling context.
+    // For now, the global mining patch handles T4 implicitly because
+    // the ant's speed parameter already incorporates the 2x speed buff.
+    // ================================================================
+
+    // ================================================================
+    // PHASE 2: GYNE TOWER PRESTIGE ACCUMULATOR
+    // Intercepts GyneTower.CheckIfGateIsSatisfied to accept elder
+    // Omni-Ants. When an elder T4 ant enters, it's consumed for
+    // prestige points. When threshold is met, trigger the nuptial flight.
+    // ================================================================
+    [HarmonyPatch(typeof(GyneTower), "CheckIfGateIsSatisfied")]
+    public static class GyneTowerPrestigePatch {
+        [HarmonyPrefix] static bool Prefix(GyneTower __instance, Ant ant, ref bool __result) {
+            if (ant == null) return true; // let vanilla handle null
+
+            // Only intercept T4 Omni-Ants
+            var casteField = AccessTools.Field(typeof(Ant), "caste");
+            if (casteField == null) return true;
+            int caste = (int)casteField.GetValue(ant);
+            if (caste != ModState.OMNI_ANT_CASTE_ID) {
+                // Not a T4 ant — block entry (only T4 elders can prestige)
+                __result = false;
+                return false;
+            }
+
+            // Check elder status (must have OLD status effect)
+            // Ant.HasStatusEffect(StatusEffect) is the correct API (see TrailGate_Old.cs)
+            bool isElder = false;
+            try {
+                isElder = ant.HasStatusEffect(StatusEffect.OLD);
+            } catch { }
+
+            if (!isElder) {
+                // Not elder yet — reject
+                __result = false;
+                return false;
+            }
+
+            // Elder T4 Omni-Ant! Consume it for prestige points.
+            ModState.prestigePoints += ModState.PRESTIGE_POINTS_PER_OMNI;
+            Debug.Log($"[Spire] Elder Omni-Ant sacrificed! +{ModState.PRESTIGE_POINTS_PER_OMNI} points. Total: {ModState.prestigePoints}/{ModState.GetPrestigeThreshold()}");
+
+            // Kill the ant (consumed by the tower)
+            ant.Die(DeathCause.OLD_AGE);
+
+            // Check if we've hit the threshold
+            if (ModState.prestigePoints >= ModState.GetPrestigeThreshold()) {
+                // SUPER GYNE LAUNCH!
+                ModState.prestigePoints = 0;
+                ModState.prestigeLevel++;
+                Debug.Log($"[Spire] ★★★ SUPER GYNE LAUNCH! Prestige now level {ModState.prestigeLevel} ★★★");
+
+                // Trigger the actual nuptial flight via the tower's StartGyne
+                try {
+                    AccessTools.Method(typeof(GyneTower), "StartGyne")?.Invoke(__instance, null);
+                } catch (Exception ex) {
+                    Debug.LogError($"[Spire] StartGyne invoke failed: {ex.Message}");
+                }
+
+                // Massive visual celebration
+                var pos = __instance.transform.position;
+                for (int i = 0; i < 10; i++) {
+                    var offset = UnityEngine.Random.insideUnitSphere * 5f;
+                    offset.y = Mathf.Abs(offset.y) + 2f;
+                    GameManager.instance.SpawnExplosion(ExplosionType.ENERGY_POOF5, pos + offset);
+                }
+            }
+
+            ModSave.Save();
+            __result = false; // we handled it
+            return false;
         }
     }
 
@@ -1128,35 +1356,51 @@ namespace ColonySpireMod
             try {
                 var addSettingMethod = AccessTools.Method(typeof(UISettings), "AddSetting");
                 if (addSettingMethod == null) return;
-                
-                var blankSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
-                var sliderSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
-                
-                SetupSlider(blankSetting, sliderSetting);
 
-                // Feature toggles section
-                var blankSetting2 = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
-                if (blankSetting2 != null) blankSetting2.InitEmpty();
+                // ── Section: Vanilla Fixes & Improvements (always visible) ──
+                var blankFixes = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                if (blankFixes != null) blankFixes.InitEmpty();
 
-                SetupFeatureToggle(__instance, addSettingMethod, "Prestige System",
-                    "Queen tiers, Colony Spire tracks, speed/mining/mold/wing/gatherer upgrades",
-                    () => ModState.enablePrestige,
-                    v => { ModState.enablePrestige = v; ModSave.SaveSettings(); });
-
-                SetupFeatureToggle(__instance, addSettingMethod, "Concrete Island Combat",
-                    "Corpse health bars, attack mechanics, shield generators",
-                    () => ModState.enableCombat,
-                    v => { ModState.enableCombat = v; ModSave.SaveSettings(); });
+                SetupFeatureToggle(__instance, addSettingMethod, "Divider Save Fix",
+                    "Fix vanilla bug where divider active trail corrupts on save/load",
+                    () => ModState.enableDividerFix,
+                    v => { ModState.enableDividerFix = v; ModSave.SaveSettings(); });
 
                 SetupFeatureToggle(__instance, addSettingMethod, "Colored Trails",
                     "Color variants for Main Bus trails",
                     () => ModState.enableColoredTrails,
                     v => { ModState.enableColoredTrails = v; ModSave.SaveSettings(); });
 
-                SetupFeatureToggle(__instance, addSettingMethod, "Battery Gates",
-                    "Stockpile gates can target batteries",
+                SetupFeatureToggle(__instance, addSettingMethod, "Stockpile Gate Battery Target",
+                    "Stockpile gates can target battery",
                     () => ModState.enableBatteryGates,
                     v => { ModState.enableBatteryGates = v; ModSave.SaveSettings(); });
+
+                // ── Section: Colony Spire Mod (master + sub-toggles) ──
+                var blankMaster = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                if (blankMaster != null) blankMaster.InitEmpty();
+
+                SetupFeatureToggle(__instance, addSettingMethod, "★ Colony Spire Mod",
+                    "Master toggle for all Colony Spire content (requires restart)",
+                    () => ModState.enableColonySpire,
+                    v => { ModState.enableColonySpire = v; ModSave.SaveSettings(); });
+
+                // Only show sub-toggles and slider when master is enabled
+                if (ModState.enableColonySpire) {
+                    var blankSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                    var sliderSetting = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);
+                    SetupSlider(blankSetting, sliderSetting);
+
+                    SetupFeatureToggle(__instance, addSettingMethod, "  Prestige System",
+                        "Queen tiers, Colony Spire tracks, speed/mining/mold/wing/gatherer upgrades",
+                        () => ModState.enablePrestige,
+                        v => { ModState.enablePrestige = v; ModSave.SaveSettings(); });
+
+                    SetupFeatureToggle(__instance, addSettingMethod, "  Concrete Island Combat",
+                        "Corpse health bars, attack mechanics, shield generators",
+                        () => ModState.enableCombat,
+                        v => { ModState.enableCombat = v; ModSave.SaveSettings(); });
+                }
             } catch (Exception ex) {
                 Debug.Log($"[Spire] UISettings exception: {ex.Message}");
             }
@@ -1721,14 +1965,16 @@ namespace ColonySpireMod
                 ui_hover.SetTitle(__instance.data.GetTitle() + $" [{hpText}]");
                 ui_hover.UpdateHealth(hpText, hpRatio);
                 
-                var dropDisplay = new Dictionary<PickupType, string>
+                // Phase 2: Show excavation core reward instead of drop table
+                float radius = 0f;
+                try { radius = __instance.GetRadius(); } catch { }
+                int coreReward = radius > 20f ? 10 : radius > 10f ? 3 : 1;
+                string sizeLabel = radius > 20f ? "Large" : radius > 10f ? "Medium" : "Small";
+                var coreDisplay = new Dictionary<PickupType, string>
                 {
-                    { (PickupType)334, "~10" }, // Microchip
-                    { (PickupType)327, "~10" }, // Wafer
-                    { (PickupType)329, "~10" }, // Biofuel
-                    { (PickupType)328, "~10" }  // Royal Jelly
+                    { (PickupType)328, $"{coreReward} Excavation Cores ({sizeLabel})" }
                 };
-                ui_hover.inventoryGrid.Update("Mega Pinata Rewards", dropDisplay, "");
+                ui_hover.inventoryGrid.Update("Combat Reward", coreDisplay, "");
             }
         }
     }
@@ -1769,14 +2015,16 @@ namespace ColonySpireMod
                 
                 if (ui_click is UIClickLayout_BiomeObject clBiome)
                 {
-                    var dropDisplay = new Dictionary<PickupType, string>
+                    // Phase 2: Show excavation core reward
+                    float radius = 0f;
+                    try { radius = __instance.GetRadius(); } catch { }
+                    int coreReward = radius > 20f ? 10 : radius > 10f ? 3 : 1;
+                    string sizeLabel = radius > 20f ? "Large" : radius > 10f ? "Medium" : "Small";
+                    var coreDisplay = new Dictionary<PickupType, string>
                     {
-                        { (PickupType)334, "~10" }, // Microchip
-                        { (PickupType)327, "~10" }, // Wafer
-                        { (PickupType)329, "~10" }, // Biofuel
-                        { (PickupType)328, "~10" }  // Royal Jelly
+                        { (PickupType)328, $"{coreReward} Excavation Cores ({sizeLabel})" }
                     };
-                    clBiome.inventoryGrid.Update("Mega Pinata Rewards", dropDisplay, "");
+                    clBiome.inventoryGrid.Update("Combat Reward", coreDisplay, "");
                 }
             }
         }
@@ -1804,7 +2052,6 @@ namespace ColonySpireMod
                             if (!data.isDead) 
                             {
                                 data.health -= 50f;
-                                // Debug.Log($"[Spire/Corpse] Melee Hit from Ant! Health: {data.health}/{data.maxHealth}");
                                 
                                 // Visual impact effect at the strike location
                                 GameManager.instance.SpawnExplosion(ExplosionType.ENERGY_POOF1, _pickup.transform.position);
@@ -1812,8 +2059,23 @@ namespace ColonySpireMod
                                 if (data.health <= 0 && !data.isDead)
                                 {
                                     data.isDead = true;
-                                    Debug.Log("[Spire/Corpse] CORPSE DESTROYED! Mega Pinata imminent!");
-                                    ModSpawners.SpawnMegaPinata(corpse.transform.position);
+                                    
+                                    // Phase 2: Grant Excavation Cores based on corpse size
+                                    float radius = 0f;
+                                    try { radius = corpse.GetRadius(); } catch { }
+                                    int coreReward = radius > 20f ? 10 : radius > 10f ? 3 : 1;
+                                    ModState.excavationCores += coreReward;
+                                    Debug.Log($"[Spire/Corpse] CORPSE DESTROYED! +{coreReward} Excavation Cores (total: {ModState.excavationCores})");
+
+                                    // Celebratory explosion (no item drops)
+                                    var pos = corpse.transform.position;
+                                    for (int i = 0; i < 5; i++) {
+                                        var offset = UnityEngine.Random.insideUnitSphere * 3f;
+                                        offset.y = Mathf.Abs(offset.y) + 1f;
+                                        GameManager.instance.SpawnExplosion(ExplosionType.ENERGY_POOF3, pos + offset);
+                                    }
+
+                                    ModSave.Save();
                                     corpse.Delete(); 
                                 }
                             }
@@ -2298,6 +2560,683 @@ namespace ColonySpireMod
             }
 
             return false; // skip original
+        }
+    }
+
+    // ================================================================
+    // PHASE 2: ISLAND FURNACE — Battery accepts ANY material
+    // When furnaceEnabled (prestige >= 1), BatteryBuildings become
+    // "Island Furnaces" that accept any material and convert to energy.
+    // ================================================================
+    [HarmonyPatch(typeof(BatteryBuilding), "CanInsert_Intake")]
+    public static class FurnaceCanInsertPatch {
+        [HarmonyPrefix]
+        static bool Prefix(BatteryBuilding __instance, PickupType _type, ExchangeType exchange,
+            ref bool let_ant_wait, ref bool __result) {
+            if (!ModState.furnaceEnabled) return true; // vanilla behavior
+            if (exchange != ExchangeType.BUILDING_IN) return true;
+
+            // Accept any material — check if there's room for energy
+            var capField = AccessTools.Field(typeof(BatteryBuilding), "energyCapacity");
+            float cap = (float)(capField?.GetValue(__instance) ?? 100f);
+            if (__instance.storedEnergy < cap - 1f) {
+                __result = true;
+                return false; // skip original
+            }
+            return true; // full, let vanilla handle rejection
+        }
+    }
+
+    [HarmonyPatch(typeof(BatteryBuilding), "OnPickupArrival_Intake")]
+    public static class FurnaceOnArrivalPatch {
+        [HarmonyPrefix]
+        static bool Prefix(BatteryBuilding __instance, Pickup _pickup) {
+            if (!ModState.furnaceEnabled) return true; // vanilla
+            if (_pickup == null) return true;
+
+            // If the item has energyAmount > 0, let vanilla handle it (it's already an energy item)
+            if (_pickup.data.energyAmount > 0f) return true;
+
+            // Convert ANY material to energy
+            var capField = AccessTools.Field(typeof(BatteryBuilding), "energyCapacity");
+            float cap = (float)(capField?.GetValue(__instance) ?? 100f);
+            
+            // Remove from incoming list
+            var incomingField = AccessTools.Field(typeof(Building), "incomingPickups_intake");
+            if (incomingField != null) {
+                var incoming = incomingField.GetValue(__instance) as List<Pickup>;
+                incoming?.Remove(_pickup);
+            }
+
+            __instance.storedEnergy = Mathf.Clamp(
+                __instance.storedEnergy + ModState.FURNACE_ENERGY_PER_ITEM,
+                0f, cap);
+
+            // Visual feedback
+            GameManager.instance.SpawnExplosion(ExplosionType.ENERGY_POOF1,
+                _pickup.transform.position + Vector3.up * 0.5f);
+            
+            _pickup.Delete();
+
+            // Update visual bars
+            AccessTools.Method(typeof(BatteryBuilding), "UpdateVisual")
+                ?.Invoke(__instance, null);
+            
+            return false; // skip vanilla
+        }
+    }
+
+    // Override title for BatteryBuilding when furnace is enabled
+    [HarmonyPatch(typeof(BuildingData), "GetTitle")]
+    public static class FurnaceTitlePatch {
+        [HarmonyPostfix]
+        static void Postfix(BuildingData __instance, ref string __result) {
+            if (!ModState.furnaceEnabled) return;
+            // Check if this is a battery building (not the shield dome)
+            if (__instance.code != null && __instance.code.Contains("BATTERY")) {
+                __result = "Island Furnace";
+            }
+        }
+    }
+
+    // Override hover description for BatteryBuilding when furnace is active
+    [HarmonyPatch(typeof(BuildingData), "GetDescription")]
+    public static class FurnaceHoverPatch {
+        [HarmonyPostfix]
+        static void Postfix(BuildingData __instance, ref string __result) {
+            if (!ModState.furnaceEnabled) return;
+            if (__instance.code != null && __instance.code.Contains("BATTERY")) {
+                __result = $"Burns any material into {ModState.FURNACE_ENERGY_PER_ITEM} energy. " +
+                    $"Feeds the Deep Excavator's infinite resource loop.";
+            }
+        }
+    }
+
+    // ================================================================
+    // PHASE 3: OBJ MESH LOADER — Runtime .obj file parser
+    // Loads .obj files from the mod's Meshes/ directory and creates
+    // Unity Mesh objects that can be applied to building prefabs.
+    // ================================================================
+    public static class ObjLoader {
+        public static Mesh LoadObj(string path) {
+            if (!File.Exists(path)) {
+                ColonySpirePlugin.Log.LogWarning($"[ObjLoader] File not found: {path}");
+                return null;
+            }
+
+            var tempVerts = new List<Vector3>();
+            var tempNormals = new List<Vector3>();
+            var tempUVs = new List<Vector2>();
+
+            var faceVerts = new List<Vector3>();
+            var faceNorms = new List<Vector3>();
+            var faceUVs = new List<Vector2>();
+            var triangles = new List<int>();
+
+            foreach (string rawLine in File.ReadAllLines(path)) {
+                string line = rawLine.Trim();
+                if (line.Length == 0 || line[0] == '#') continue;
+
+                string[] parts = line.Split(new[] { ' ', '\t' },
+                    StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 0) continue;
+
+                try {
+                    if (parts[0] == "v" && parts.Length >= 4) {
+                        float x = float.Parse(parts[1], CultureInfo.InvariantCulture);
+                        float y = float.Parse(parts[2], CultureInfo.InvariantCulture);
+                        float z = float.Parse(parts[3], CultureInfo.InvariantCulture);
+                        tempVerts.Add(new Vector3(x, y, z));
+                    }
+                    else if (parts[0] == "vn" && parts.Length >= 4) {
+                        float x = float.Parse(parts[1], CultureInfo.InvariantCulture);
+                        float y = float.Parse(parts[2], CultureInfo.InvariantCulture);
+                        float z = float.Parse(parts[3], CultureInfo.InvariantCulture);
+                        tempNormals.Add(new Vector3(x, y, z));
+                    }
+                    else if (parts[0] == "vt" && parts.Length >= 3) {
+                        float u = float.Parse(parts[1], CultureInfo.InvariantCulture);
+                        float v = float.Parse(parts[2], CultureInfo.InvariantCulture);
+                        tempUVs.Add(new Vector2(u, v));
+                    }
+                    else if (parts[0] == "f") {
+                        var faceIndices = new List<int>();
+                        for (int i = 1; i < parts.Length; i++) {
+                            string[] indices = parts[i].Split('/');
+                            int vi = int.Parse(indices[0]) - 1;
+                            int ui = indices.Length > 1 && indices[1] != ""
+                                ? int.Parse(indices[1]) - 1 : -1;
+                            int ni = indices.Length > 2 && indices[2] != ""
+                                ? int.Parse(indices[2]) - 1 : -1;
+
+                            int idx = faceVerts.Count;
+                            faceVerts.Add(vi >= 0 && vi < tempVerts.Count ? tempVerts[vi] : Vector3.zero);
+                            faceNorms.Add(ni >= 0 && ni < tempNormals.Count
+                                ? tempNormals[ni] : Vector3.up);
+                            faceUVs.Add(ui >= 0 && ui < tempUVs.Count
+                                ? tempUVs[ui] : Vector2.zero);
+                            faceIndices.Add(idx);
+                        }
+                        // Fan triangulate (handles tris, quads, n-gons)
+                        for (int i = 1; i < faceIndices.Count - 1; i++) {
+                            triangles.Add(faceIndices[0]);
+                            triangles.Add(faceIndices[i]);
+                            triangles.Add(faceIndices[i + 1]);
+                        }
+                    }
+                } catch (Exception ex) {
+                    ColonySpirePlugin.Log.LogWarning($"[ObjLoader] Parse error on line '{line}': {ex.Message}");
+                }
+            }
+
+            if (faceVerts.Count == 0) {
+                ColonySpirePlugin.Log.LogError($"[ObjLoader] No vertices found in {path}");
+                return null;
+            }
+
+            Mesh mesh = new Mesh();
+            mesh.name = Path.GetFileNameWithoutExtension(path);
+            // CRITICAL: must set UInt32 BEFORE assigning vertices/triangles
+            // to support meshes with >65k vertices
+            mesh.indexFormat = IndexFormat.UInt32;
+            mesh.vertices = faceVerts.ToArray();
+            mesh.normals = faceNorms.ToArray();
+            mesh.uv = faceUVs.ToArray();
+            mesh.triangles = triangles.ToArray();
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            ColonySpirePlugin.Log.LogInfo($"[ObjLoader] Loaded {Path.GetFileName(path)}: " +
+                $"{faceVerts.Count} verts, {triangles.Count / 3} tris");
+            return mesh;
+        }
+    }
+
+    // ================================================================
+    // PHASE 3: CUSTOM BUILDING INJECTION
+    // Clones existing building prefabs, replaces meshes with AI-generated
+    // OBJ files, and registers them in PrefabData.buildings.
+    // Uses lazy init via BuildingData.Get postfix.
+    // ================================================================
+    public static class CustomBuildingInjector {
+        private static bool _injected = false;
+
+        // Mesh directory: <game>/Mods/QueenTierMod/Meshes/
+        public static string GetMeshDir() {
+            string pluginDir = Path.GetDirectoryName(typeof(ColonySpirePlugin).Assembly.Location);
+            return Path.Combine(pluginDir, "..", "..", "Mods", "QueenTierMod", "Meshes");
+        }
+
+        public static void EnsureInjected() {
+            if (_injected) return;
+            if (PrefabData.buildings == null || PrefabData.buildings.Count == 0) return;
+            _injected = true;
+
+            string meshDir = GetMeshDir();
+            ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] Mesh directory: {meshDir}");
+            ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] Directory exists: {Directory.Exists(meshDir)}");
+
+            // --- LIQUID SMELTER ---
+            InjectBuilding(
+                templateCode: "SMELTER",
+                newCode: "MOD_LIQUID_SMELTER",
+                meshFile: Path.Combine(meshDir, "liquid_smelter.obj"),
+                tintColor: new Color(1f, 0.4f, 0.1f, 1f),
+                emissiveColor: new Color(2f, 0.8f, 0f, 1f),
+                scaleMult: 3.0f,
+                buildCost: "IRON_BAR 8, COPPER_BAR 4",
+                buildGroup: BuildingGroup.PRODUCTION
+            );
+
+            // --- HIGH-END ASSEMBLER ---
+            InjectBuilding(
+                templateCode: "COMBINER",
+                newCode: "MOD_ASSEMBLER",
+                meshFile: Path.Combine(meshDir, "assembler.obj"),
+                tintColor: new Color(0.2f, 0.5f, 1f, 1f),
+                emissiveColor: new Color(0f, 1f, 2f, 1f),
+                scaleMult: 2.0f,
+                buildCost: "IRON_BAR 12, MICROCHIP 3, COPPER_BAR 6",
+                buildGroup: BuildingGroup.PRODUCTION
+            );
+        }
+
+        private static void InjectBuilding(string templateCode, string newCode,
+            string meshFile, Color tintColor, Color emissiveColor,
+            float scaleMult, string buildCost, BuildingGroup buildGroup) {
+
+            // Check if already injected (e.g., on reload)
+            foreach (var b in PrefabData.buildings)
+                if (b.code == newCode) { ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] {newCode} already registered"); return; }
+
+            BuildingData template = null;
+            foreach (var b in PrefabData.buildings)
+                if (b.code == templateCode) { template = b; break; }
+
+            if (template == null) {
+                ColonySpirePlugin.Log.LogWarning($"[Spire/Buildings] Template '{templateCode}' not found, skipping {newCode}");
+                return;
+            }
+
+            // 1. Clone the prefab
+            var clonedPrefab = UnityEngine.Object.Instantiate(template.prefab);
+            clonedPrefab.name = newCode;
+            UnityEngine.Object.DontDestroyOnLoad(clonedPrefab);
+            clonedPrefab.SetActive(false);
+
+            // 2. Try loading custom mesh from OBJ file
+            bool hasMesh = false;
+            ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] Mesh file: {meshFile}, exists={File.Exists(meshFile)}");
+            if (File.Exists(meshFile)) {
+                Mesh customMesh = ObjLoader.LoadObj(meshFile);
+                if (customMesh != null) {
+                    // Get the meshBase (the visual root of the building)
+                    var bldgComp = clonedPrefab.GetComponent<Building>();
+                    GameObject meshBaseObj = bldgComp?.meshBase ?? clonedPrefab;
+
+                    // CAPTURE a material from existing renderers BEFORE destroying them
+                    Material capturedMat = null;
+                    string capturedShaderName = "Standard";
+                    var existingRenderers = meshBaseObj.GetComponentsInChildren<MeshRenderer>(true);
+                    foreach (var r in existingRenderers) {
+                        if (r.sharedMaterial != null) {
+                            capturedMat = r.sharedMaterial;
+                            capturedShaderName = capturedMat.shader.name;
+                            break;
+                        }
+                    }
+                    ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] Captured shader: {capturedShaderName}, renderers: {existingRenderers.Length}");
+
+                    // DESTROY ALL children under meshBase - the game re-enables via SetObActive
+                    // so we must remove them entirely. Iterate in reverse to avoid index shifting.
+                    int destroyedCount = 0;
+                    for (int i = meshBaseObj.transform.childCount - 1; i >= 0; i--) {
+                        var child = meshBaseObj.transform.GetChild(i).gameObject;
+                        UnityEngine.Object.DestroyImmediate(child);
+                        destroyedCount++;
+                    }
+                    ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] Destroyed {destroyedCount} children from '{meshBaseObj.name}'");
+
+                    // Also destroy any MeshRenderer/MeshFilter directly on meshBase itself
+                    var directMF = meshBaseObj.GetComponent<MeshFilter>();
+                    var directMR = meshBaseObj.GetComponent<MeshRenderer>();
+                    if (directMF != null) UnityEngine.Object.DestroyImmediate(directMF);
+                    if (directMR != null) UnityEngine.Object.DestroyImmediate(directMR);
+
+                    // Create new child with custom mesh, SCALED to building size
+                    // OBJ meshes are ~2 Unity units wide; buildings need to be much bigger
+                    var customObj = new GameObject("CustomMesh");
+                    customObj.transform.SetParent(meshBaseObj.transform, false);
+                    customObj.transform.localPosition = Vector3.zero;
+                    customObj.transform.localRotation = Quaternion.identity;
+                    // scaleMult is the intended building scale (e.g. 1.2 = 20% bigger than template)
+                    // We need a base scale factor to bring the ~2-unit OBJ up to building size
+                    customObj.transform.localScale = Vector3.one * scaleMult;
+
+                    var mf = customObj.AddComponent<MeshFilter>();
+                    mf.sharedMesh = customMesh;
+
+                    var mr = customObj.AddComponent<MeshRenderer>();
+                    // Use the captured game material as a base (correct shader + rendering mode)
+                    if (capturedMat != null) {
+                        mr.sharedMaterial = new Material(capturedMat);
+                    } else {
+                        mr.sharedMaterial = new Material(Shader.Find("Standard"));
+                    }
+                    mr.sharedMaterial.SetColor("_Color", tintColor);
+                    if (mr.sharedMaterial.HasProperty("_EmissionColor")) {
+                        mr.sharedMaterial.SetColor("_EmissionColor", emissiveColor);
+                        mr.sharedMaterial.EnableKeyword("_EMISSION");
+                    }
+                    mr.enabled = true;
+
+                    hasMesh = true;
+                    ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] Created CustomMesh child under '{meshBaseObj.name}' " +
+                        $"verts={customMesh.vertexCount} scale={scaleMult} shader={mr.sharedMaterial.shader.name}");
+                }
+            }
+
+            // 3. Apply visual styling only for template mesh fallback (custom mesh already styled above)
+            if (!hasMesh) {
+                foreach (var r in clonedPrefab.GetComponentsInChildren<MeshRenderer>(true)) {
+                    if (r.material != null) {
+                        r.material = new Material(r.material);
+                        r.material.SetColor("_Color", tintColor);
+                        if (r.material.HasProperty("_EmissionColor")) {
+                            r.material.SetColor("_EmissionColor", emissiveColor);
+                            r.material.EnableKeyword("_EMISSION");
+                        }
+                    }
+                }
+            }
+
+            // Scale the mesh base (only for template mesh fallback, custom mesh already scaled)
+            if (!hasMesh) {
+                var bldg = clonedPrefab.GetComponent<Building>();
+                if (bldg?.meshBase != null)
+                    bldg.meshBase.transform.localScale *= scaleMult;
+                else
+                    clonedPrefab.transform.localScale *= scaleMult;
+            }
+
+            // 4. Create BuildingData
+            var newData = new BuildingData {
+                code = newCode,
+                prefab = clonedPrefab,
+                title = newCode + "_TITLE",
+                description = newCode + "_DESC",
+                group = buildGroup,
+                inBuildMenu = true,
+                showOrder = template.showOrder + 100,
+                maxBuildCount = 0,
+                noDemolish = false,
+                baseCosts = PickupCost.ParseList(buildCost),
+                recipes = new List<string>(),
+                autoRecipe = false,
+                parentBuilding = "",
+                titleParent = "",
+                inDemo = false,
+            };
+
+            PrefabData.buildings.Add(newData);
+
+            // 5. Force BuildingData dictionary rebuild
+            var dicField = AccessTools.Field(typeof(BuildingData), "dicBuildingData");
+            dicField?.SetValue(null, null);
+
+            string meshStatus = hasMesh ? "custom mesh" : "template mesh (recolored)";
+            ColonySpirePlugin.Log.LogInfo($"[Spire/Buildings] Registered {newCode} ({meshStatus})");
+        }
+    }
+
+    // Trigger building injection when BuildingData.Get is first called
+    // (guarantees PrefabData.buildings is populated)
+    [HarmonyPatch(typeof(BuildingData), "Get", new Type[] { typeof(string) })]
+    public static class BuildingDataGetPatch {
+        [HarmonyPrefix]
+        static void Prefix() {
+            CustomBuildingInjector.EnsureInjected();
+        }
+    }
+
+    // Localization for custom building names
+    [HarmonyPatch(typeof(Loc), "GetObject")]
+    public static class CustomBuildingLocPatch {
+        static readonly Dictionary<string, string> modStrings = new() {
+            { "MOD_LIQUID_SMELTER_TITLE",  "Liquid Smelter" },
+            { "MOD_LIQUID_SMELTER_DESC",   "Melts iron and copper ore into liquid metal for advanced manufacturing." },
+            { "MOD_ASSEMBLER_TITLE",       "High-End Assembler" },
+            { "MOD_ASSEMBLER_DESC",        "Crafts advanced components: circuit boards, compute units, and alloy frames." },
+        };
+
+        [HarmonyPrefix]
+        static bool Prefix(string code, ref string __result) {
+            if (modStrings.TryGetValue(code, out var text)) {
+                __result = text;
+                return false;
+            }
+            return true;
+        }
+    }
+
+    // ================================================================
+    // PHASE 2: DEEP EXCAVATOR — Spire-based resource regeneration
+    // A MonoBehaviour attached to the Colony Spire that periodically
+    // consumes energy (from island batteries) + excavation cores to
+    // spawn new resource deposits on the island.
+    // ================================================================
+    public class DeepExcavatorBehavior : MonoBehaviour {
+        public Building spireBuilding;
+        private float timer = 0f;
+        private float statusTimer = 0f;
+
+        void Update() {
+            if (spireBuilding == null) return;
+            if (GameManager.instance == null || GameManager.instance.GetStatus() != GameStatus.RUNNING) return;
+            if (ModState.prestigeLevel < 1) return; // Need at least prestige 1 to activate
+
+            float dt = Time.deltaTime;
+            timer += dt;
+            statusTimer += dt;
+
+            // Log status every 30 seconds
+            if (statusTimer >= 30f) {
+                statusTimer = 0f;
+                Debug.Log($"[Spire/Excavator] Status: Cores={ModState.excavationCores} Timer={timer:F0}/{ModState.EXCAVATOR_INTERVAL:F0}s");
+            }
+
+            if (timer < ModState.EXCAVATOR_INTERVAL) return;
+            timer = 0f;
+
+            // Check if we have enough excavation cores
+            if (ModState.excavationCores < ModState.EXCAVATOR_CORE_COST) {
+                Debug.Log($"[Spire/Excavator] Not enough cores ({ModState.excavationCores}/{ModState.EXCAVATOR_CORE_COST})");
+                return;
+            }
+
+            // Check if island has enough energy
+            if (spireBuilding.ground == null) return;
+            float energyAvailable = spireBuilding.ground.GetEnergy(ModState.EXCAVATOR_ENERGY_COST);
+            if (energyAvailable < ModState.EXCAVATOR_ENERGY_COST - 1f) {
+                Debug.Log($"[Spire/Excavator] Not enough island energy ({energyAvailable:F0}/{ModState.EXCAVATOR_ENERGY_COST:F0})");
+                return;
+            }
+
+            // Consume cores
+            ModState.excavationCores -= ModState.EXCAVATOR_CORE_COST;
+
+            // Try to spawn a resource deposit on this island
+            SpawnResourceDeposit();
+            ModSave.Save();
+        }
+
+        private void SpawnResourceDeposit() {
+            if (spireBuilding.ground == null) return;
+            Ground ground = spireBuilding.ground;
+
+            // Pick a random resource type
+            string[] candidates = ModState.MineableResources;
+            string code = candidates[UnityEngine.Random.Range(0, candidates.Length)];
+
+            // Check if BiomeObjectData exists for this code
+            BiomeObjectData bobData = null;
+            try { bobData = BiomeObjectData.Get(code); } catch { }
+            if (bobData == null || bobData.prefab == null) {
+                // Fallback: try a simpler code
+                Debug.LogWarning($"[Spire/Excavator] BiomeObjectData not found for '{code}', trying BOB_STONE");
+                code = "BOB_STONE";
+                try { bobData = BiomeObjectData.Get(code); } catch { }
+                if (bobData == null || bobData.prefab == null) {
+                    Debug.LogError("[Spire/Excavator] Cannot find any valid BiomeObjectData! Aborting.");
+                    return;
+                }
+            }
+
+            // Find a random spawn position on the island
+            Vector3 spawnPos = ground.transform.position;
+            for (int attempt = 0; attempt < 10; attempt++) {
+                Vector3 offset = UnityEngine.Random.insideUnitSphere * 20f;
+                offset.y = 0;
+                Vector3 candidatePos = ground.transform.position + offset;
+
+                // Raycast downward to find ground surface
+                if (Physics.Raycast(candidatePos + Vector3.up * 50f, Vector3.down, out RaycastHit hit, 100f)) {
+                    spawnPos = hit.point;
+                    break;
+                }
+            }
+
+            // Spawn the resource node
+            float size = UnityEngine.Random.Range(0.8f, 1.5f);
+            try {
+                var bob = GameManager.instance.SpawnBiomeObject(
+                    code, ground, spawnPos, UnityEngine.Random.rotation,
+                    ground.transform, size);
+                
+                if (bob != null) {
+                    Debug.Log($"[Spire/Excavator] ★ Spawned {code} at {spawnPos} (size {size:F1})");
+                    
+                    // Visual celebration
+                    for (int i = 0; i < 3; i++) {
+                        var offset = UnityEngine.Random.insideUnitSphere * 2f;
+                        offset.y = Mathf.Abs(offset.y) + 1f;
+                        GameManager.instance.SpawnExplosion(ExplosionType.ENERGY_POOF5, spawnPos + offset);
+                    }
+                }
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire/Excavator] Failed to spawn {code}: {ex.Message}");
+            }
+        }
+    }
+
+    // ================================================================
+    // DIVIDER SAVE/LOAD BUG FIX
+    // ================================================================
+    // Vanilla bug: divider's active trail index (dividerI) gets corrupted
+    // during save/load because:
+    //   1. allTrails/allSplits are HashSets with non-deterministic iteration
+    //   2. dividerTrails is sorted by clock angle relative to the FIRST
+    //      trail's direction — but the first trail depends on insertion order
+    //   3. The raw index dividerI is saved, but after reload the list order
+    //      may differ, so the index points to the wrong trail.
+    //
+    // Fix strategy:
+    //   A) Re-sort dividerTrails using an absolute reference (Vector3.forward)
+    //      so the order is deterministic regardless of insertion.
+    //   B) Before saving, translate dividerI → trail linkId (a stable ID).
+    //   C) After loading, translate linkId → correct index in rebuilt list.
+    // ================================================================
+
+    // Part A: Fix the sort to use an absolute reference direction
+    [HarmonyPatch(typeof(Split), "UpdateDividerTrails")]
+    public static class DividerSortFixPatch {
+        [HarmonyPostfix]
+        static void Postfix(Split __instance) {
+            try {
+                var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
+                if (dividerTrailsField == null) return;
+                var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
+                if (dividerTrails == null || dividerTrails.Count <= 1) return;
+
+                // Re-sort using Vector3.forward as the absolute reference direction
+                // instead of the first trail's direction (which depends on insertion order)
+                Vector3 refDir = Vector3.forward;
+                dividerTrails.Sort((Trail a, Trail b) => {
+                    float angleA = CalculateClockAngle(refDir, a.direction);
+                    float angleB = CalculateClockAngle(refDir, b.direction);
+                    return angleA.CompareTo(angleB);
+                });
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire/DividerFix] Sort fix failed: {ex.Message}");
+            }
+        }
+
+        static float CalculateClockAngle(Vector3 dir1, Vector3 dir2) {
+            float angle = Vector3.Angle(dir1, dir2);
+            if (Vector3.Cross(dir1, dir2).y >= 0f) return angle;
+            return 360f - angle;
+        }
+    }
+
+    // Part B: Before saving, translate dividerI to the trail's linkId
+    // so we persist a stable identifier instead of a fragile index.
+    //
+    // We store the linkId into dividerI itself (since linkIds are always > 0
+    // during save, and normal dividerI values are small indices starting at 0,
+    // we mark it by adding a large offset so the load-side can detect it).
+    [HarmonyPatch(typeof(Split), "Write")]
+    public static class DividerSaveFixPatch {
+        // We use a ConditionalWeakTable to stash the REAL dividerI so we can
+        // restore it after Write() completes (we don't want to corrupt
+        // the live game state).
+        static readonly ConditionalWeakTable<Split, StrongBox<int>> _savedDividerI = new();
+
+        [HarmonyPrefix]
+        static void Prefix(Split __instance) {
+            try {
+                var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
+                var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
+                if (dividerIField == null || dividerTrailsField == null) return;
+
+                int dividerI = (int)dividerIField.GetValue(__instance);
+                var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
+                if (dividerTrails == null || dividerTrails.Count == 0) return;
+
+                // Stash original dividerI so we can restore it in Postfix
+                if (_savedDividerI.TryGetValue(__instance, out var box))
+                    box.Value = dividerI;
+                else
+                    _savedDividerI.Add(__instance, new StrongBox<int>(dividerI));
+
+                // Replace dividerI with the trail's linkId (shifted by 100000
+                // to distinguish from normal small indices on the load side)
+                if (dividerI >= 0 && dividerI < dividerTrails.Count) {
+                    int linkId = dividerTrails[dividerI].linkId;
+                    if (linkId > 0) {
+                        dividerIField.SetValue(__instance, linkId + 100000);
+                    }
+                }
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire/DividerFix] Save prefix failed: {ex.Message}");
+            }
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(Split __instance) {
+            try {
+                // Restore the real dividerI so the running game isn't affected
+                if (_savedDividerI.TryGetValue(__instance, out var box)) {
+                    var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
+                    dividerIField?.SetValue(__instance, box.Value);
+                }
+            } catch { }
+        }
+    }
+
+    // Part C: After loading and Init, translate the encoded linkId back to
+    // the correct index in the rebuilt dividerTrails list.
+    [HarmonyPatch(typeof(Split), "Init")]
+    public static class DividerLoadFixPatch {
+        [HarmonyPostfix]
+        static void Postfix(Split __instance) {
+            try {
+                var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
+                var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
+                if (dividerIField == null || dividerTrailsField == null) return;
+
+                int dividerI = (int)dividerIField.GetValue(__instance);
+                var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
+                if (dividerTrails == null || dividerTrails.Count == 0) return;
+
+                // Check if this is our encoded linkId (offset >= 100000)
+                if (dividerI >= 100000) {
+                    int savedLinkId = dividerI - 100000;
+                    // Find the trail with this linkId in the sorted dividerTrails
+                    int newIndex = -1;
+                    for (int i = 0; i < dividerTrails.Count; i++) {
+                        if (dividerTrails[i].linkId == savedLinkId) {
+                            newIndex = i;
+                            break;
+                        }
+                    }
+                    if (newIndex >= 0) {
+                        dividerIField.SetValue(__instance, newIndex);
+                    } else {
+                        // Couldn't find the trail — fall back to 0
+                        Debug.LogWarning($"[Spire/DividerFix] Could not find trail with linkId {savedLinkId}, resetting dividerI to 0");
+                        dividerIField.SetValue(__instance, 0);
+                    }
+                }
+                // else: loading a save from before the mod, or vanilla save — leave as-is
+                // (our Sort fix in Part A already makes the list order deterministic,
+                // which helps even without the linkId encoding)
+
+                // Update the pointer visual to match the corrected dividerI
+                var updatePointer = AccessTools.Method(typeof(Split), "UpdatePointer");
+                updatePointer?.Invoke(__instance, new object[] { true });
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire/DividerFix] Load fix failed: {ex.Message}");
+            }
         }
     }
 }
