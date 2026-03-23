@@ -38,8 +38,8 @@ if (-not (Test-Path $bepinexPath)) {
     exit 1
 }
 
-# --- Step 1: Create backup for prefabs --
-Write-Host "[1/3] Backing up vanilla files..." -ForegroundColor Yellow
+# --- Step 1: Create backup for prefabs and techtree --
+Write-Host "[1/4] Backing up vanilla files..." -ForegroundColor Yellow
 
 $prefabsBackup = "$prefabsPath.backup"
 if (-not (Test-Path $prefabsBackup)) {
@@ -49,9 +49,18 @@ if (-not (Test-Path $prefabsBackup)) {
     Write-Host "  Backup already exists: prefabs.fods.backup (skipped)" -ForegroundColor Gray
 }
 
+$techTreePath = Join-Path $gameDir "Microtopia_Data\StreamingAssets\techtree.fods"
+$techTreeBackup = "$techTreePath.backup"
+if (-not (Test-Path $techTreeBackup)) {
+    Copy-Item $techTreePath $techTreeBackup
+    Write-Host "  Created: techtree.fods.backup" -ForegroundColor Green
+} else {
+    Write-Host "  Backup already exists: techtree.fods.backup (skipped)" -ForegroundColor Gray
+}
+
 # --- Step 2: Build & Install Plugin ---
 Write-Host ""
-Write-Host "[2/3] Building BepInEx Plugin..." -ForegroundColor Yellow
+Write-Host "[2/4] Building BepInEx Plugin..." -ForegroundColor Yellow
 
 # Clean up any stale duplicate DLLs in BepInEx subfolders
 # BepInEx scans recursively — having the same plugin in both plugins/ and plugins/ColonySpire/
@@ -91,7 +100,7 @@ try {
 
 # --- Step 3: Copy modded prefabs.fods ---
 Write-Host ""
-Write-Host "[3/3] Applying prefabs.fods changes (factory recipes)..." -ForegroundColor Yellow
+Write-Host "[3/4] Applying prefabs.fods changes (factory recipes)..." -ForegroundColor Yellow
 
 $moddedPrefabs = Join-Path $scriptDir "prefabs.fods.modded"
 if (Test-Path $moddedPrefabs) {
@@ -99,6 +108,20 @@ if (Test-Path $moddedPrefabs) {
     Write-Host "  prefabs.fods updated with mod recipes." -ForegroundColor Green
 } else {
     Write-Host "  WARNING: prefabs.fods.modded not found - skipping recipe changes." -ForegroundColor Yellow
+}
+
+# --- Step 4: Patch techtree.fods ---
+Write-Host ""
+Write-Host "[4/4] Patching techtree.fods (research tree)..." -ForegroundColor Yellow
+
+$patchScript = Join-Path $scriptDir "patch_techtree.ps1"
+if (Test-Path $patchScript) {
+    & $patchScript -GameDir $gameDir
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
+        Write-Host "  WARNING: techtree patch returned exit code $LASTEXITCODE" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  WARNING: patch_techtree.ps1 not found - skipping tech tree changes." -ForegroundColor Yellow
 }
 
 # --- Done ---

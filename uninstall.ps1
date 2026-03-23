@@ -34,6 +34,15 @@ if (Test-Path $prefabsBackup) {
     Write-Host "  No backup found for prefabs.fods. Use Steam -> Verify to reset." -ForegroundColor Yellow
 }
 
+$techTreePath = Join-Path $gameDir "Microtopia_Data\StreamingAssets\techtree.fods"
+$techTreeBackup = "$techTreePath.backup"
+if (Test-Path $techTreeBackup) {
+    Copy-Item $techTreeBackup $techTreePath -Force
+    Write-Host "  Restored: techtree.fods" -ForegroundColor Green
+} else {
+    Write-Host "  No backup found for techtree.fods. Use Steam -> Verify to reset." -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "=== Uninstallation complete ===" -ForegroundColor Green
 Write-Host ""
