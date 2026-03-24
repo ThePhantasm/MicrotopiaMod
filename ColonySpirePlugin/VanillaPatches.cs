@@ -24,27 +24,64 @@ namespace ColonySpireMod
     //   C) After loading, translate linkId → correct index in rebuilt list.
     // ================================================================
 
-    // Part A: Fix the sort to use an absolute reference direction
+    // Part A: Fix the sort to use an absolute reference direction.
+    // ALSO handles Part C (linkId→index translation) because during loading,
+    // Split.Init() fires when connectedTrails is still empty. The actual
+    // dividerTrails list is only populated later when trails call
+    // LoadLinkSplits→PlaceTrail→UpdateDividerTrails(during_load=true).
+    // So we do the linkId translation HERE, right after the list is built
+    // and sorted, when dividerTrails is actually populated.
     [HarmonyPatch(typeof(Split), "UpdateDividerTrails")]
     public static class DividerSortFixPatch {
         [HarmonyPostfix]
-        static void Postfix(Split __instance) {
+        static void Postfix(Split __instance, bool during_load) {
             try {
                 var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
-                if (dividerTrailsField == null) return;
+                var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
+                if (dividerTrailsField == null || dividerIField == null) return;
                 var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
-                if (dividerTrails == null || dividerTrails.Count <= 1) return;
+                if (dividerTrails == null || dividerTrails.Count <= 0) return;
 
-                // Re-sort using Vector3.forward as the absolute reference direction
-                // instead of the first trail's direction (which depends on insertion order)
-                Vector3 refDir = Vector3.forward;
-                dividerTrails.Sort((Trail a, Trail b) => {
-                    float angleA = CalculateClockAngle(refDir, a.direction);
-                    float angleB = CalculateClockAngle(refDir, b.direction);
-                    return angleA.CompareTo(angleB);
-                });
+                // Step 1: Re-sort using Vector3.forward as the absolute reference
+                // direction instead of the first trail's direction (which depends
+                // on HashSet insertion order and is non-deterministic across loads)
+                if (dividerTrails.Count > 1) {
+                    Vector3 refDir = Vector3.forward;
+                    dividerTrails.Sort((Trail a, Trail b) => {
+                        float angleA = CalculateClockAngle(refDir, a.direction);
+                        float angleB = CalculateClockAngle(refDir, b.direction);
+                        return angleA.CompareTo(angleB);
+                    });
+                }
+
+                // Step 2: If loading, translate encoded linkId back to index.
+                // We encoded dividerI = linkId + 100000 during save (Part B).
+                // Now that dividerTrails is populated and sorted, find the
+                // matching trail and set dividerI to its position.
+                int dividerI = (int)dividerIField.GetValue(__instance);
+                if (during_load && dividerI >= 100000) {
+                    int savedLinkId = dividerI - 100000;
+                    int newIndex = -1;
+                    for (int i = 0; i < dividerTrails.Count; i++) {
+                        if (dividerTrails[i].linkId == savedLinkId) {
+                            newIndex = i;
+                            break;
+                        }
+                    }
+                    if (newIndex >= 0) {
+                        dividerIField.SetValue(__instance, newIndex);
+                    } else {
+                        Debug.LogWarning($"[Spire/DividerFix] Could not find trail with linkId {savedLinkId}, resetting dividerI to 0");
+                        dividerIField.SetValue(__instance, 0);
+                    }
+
+                    // Re-invoke UpdatePointer with the corrected dividerI
+                    // (vanilla already called it, but with the wrong encoded value)
+                    var updatePointer = AccessTools.Method(typeof(Split), "UpdatePointer");
+                    updatePointer?.Invoke(__instance, new object[] { true });
+                }
             } catch (Exception ex) {
-                Debug.LogError($"[Spire/DividerFix] Sort fix failed: {ex.Message}");
+                Debug.LogError($"[Spire/DividerFix] Sort/load fix failed: {ex.Message}");
             }
         }
 
@@ -110,8 +147,11 @@ namespace ColonySpireMod
         }
     }
 
-    // Part C: After loading and Init, translate the encoded linkId back to
-    // the correct index in the rebuilt dividerTrails list.
+    // Part C: No longer needed as a separate patch — the linkId→index
+    // translation is now handled in Part A's Postfix on UpdateDividerTrails,
+    // which fires at the right time (when dividerTrails is actually populated).
+    // Kept as a safety net: if dividerI is still encoded after Init somehow,
+    // clamp it.
     [HarmonyPatch(typeof(Split), "Init")]
     public static class DividerLoadFixPatch {
         [HarmonyPostfix]
@@ -123,36 +163,18 @@ namespace ColonySpireMod
 
                 int dividerI = (int)dividerIField.GetValue(__instance);
                 var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
-                if (dividerTrails == null || dividerTrails.Count == 0) return;
 
-                // Check if this is our encoded linkId (offset >= 100000)
-                if (dividerI >= 100000) {
-                    int savedLinkId = dividerI - 100000;
-                    // Find the trail with this linkId in the sorted dividerTrails
-                    int newIndex = -1;
-                    for (int i = 0; i < dividerTrails.Count; i++) {
-                        if (dividerTrails[i].linkId == savedLinkId) {
-                            newIndex = i;
-                            break;
-                        }
-                    }
-                    if (newIndex >= 0) {
-                        dividerIField.SetValue(__instance, newIndex);
-                    } else {
-                        // Couldn't find the trail — fall back to 0
-                        Debug.LogWarning($"[Spire/DividerFix] Could not find trail with linkId {savedLinkId}, resetting dividerI to 0");
-                        dividerIField.SetValue(__instance, 0);
-                    }
+                // If dividerI is still encoded (>= 100000) but dividerTrails is
+                // empty (which is the typical case at Init time), just leave it —
+                // Part A will handle it when UpdateDividerTrails fires with data.
+                // But if dividerTrails IS populated and dividerI is out of range,
+                // clamp it as a safety net.
+                if (dividerTrails != null && dividerTrails.Count > 0 && dividerI >= dividerTrails.Count && dividerI < 100000) {
+                    dividerIField.SetValue(__instance, 0);
+                    Debug.LogWarning($"[Spire/DividerFix] Init safety: clamped dividerI {dividerI} to 0 (count={dividerTrails.Count})");
                 }
-                // else: loading a save from before the mod, or vanilla save — leave as-is
-                // (our Sort fix in Part A already makes the list order deterministic,
-                // which helps even without the linkId encoding)
-
-                // Update the pointer visual to match the corrected dividerI
-                var updatePointer = AccessTools.Method(typeof(Split), "UpdatePointer");
-                updatePointer?.Invoke(__instance, new object[] { true });
             } catch (Exception ex) {
-                Debug.LogError($"[Spire/DividerFix] Load fix failed: {ex.Message}");
+                Debug.LogError($"[Spire/DividerFix] Init safety failed: {ex.Message}");
             }
         }
     }
