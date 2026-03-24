@@ -70,15 +70,15 @@ namespace ColonySpireMod
                     }
                     if (newIndex >= 0) {
                         dividerIField.SetValue(__instance, newIndex);
-                    } else {
-                        Debug.LogWarning($"[Spire/DividerFix] Could not find trail with linkId {savedLinkId}, resetting dividerI to 0");
-                        dividerIField.SetValue(__instance, 0);
+                        
+                        // Re-invoke UpdatePointer with the corrected dividerI
+                        var updatePointer = AccessTools.Method(typeof(Split), "UpdatePointer");
+                        updatePointer?.Invoke(__instance, new object[] { true });
                     }
-
-                    // Re-invoke UpdatePointer with the corrected dividerI
-                    // (vanilla already called it, but with the wrong encoded value)
-                    var updatePointer = AccessTools.Method(typeof(Split), "UpdatePointer");
-                    updatePointer?.Invoke(__instance, new object[] { true });
+                    // DO NOT reset to 0 here if not found!
+                    // Trails are loaded and added sequentially. This method is called repeatedly
+                    // as each trail connects. If we reset to 0 when the target trail hasn't been
+                    // loaded yet, we corrupt the saved linkId and ruin the restoration.
                 }
             } catch (Exception ex) {
                 Debug.LogError($"[Spire/DividerFix] Sort/load fix failed: {ex.Message}");
