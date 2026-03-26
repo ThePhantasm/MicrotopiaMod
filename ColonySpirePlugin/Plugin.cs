@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace ColonySpireMod
 {
-    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.0")]
+    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.3")]
     public class ColonySpirePlugin : BaseUnityPlugin
     {
         public static BepInEx.Logging.ManualLogSource Log;
@@ -119,7 +119,7 @@ namespace ColonySpireMod
 
             // ── Vanilla improvements (independent of Colony Spire) ──
 
-            // Divider Save Fix
+            // Divider Save Fix + Counter Gate Ant Leak Fix
             if (ModState.enableDividerFix) {
                 Logger.LogInfo("[Improvement] Divider Save Fix: ENABLED");
                 patchClasses.AddRange(new[] {
@@ -127,6 +127,7 @@ namespace ColonySpireMod
                     typeof(DividerSaveFixPatch),
                     typeof(DividerLoadFixPatch),
                     typeof(DividerChooseSafetyPatch),
+                    typeof(CounterGateLoadLeakFixPatch),
                 });
             } else {
                 Logger.LogInfo("[Improvement] Divider Save Fix: DISABLED");

@@ -670,6 +670,54 @@ namespace ColonySpireMod
         }
     }
 
+    // ================================================================
+    // COUNTER GATE SAVE/LOAD BUG FIX — ANT LEAK PREVENTION
+    // ================================================================
+    // Vanilla bug: after loading a save, the TrailGate_Counter's
+    // counterArea (the set of trails whose ants are counted) is empty
+    // until GateUpdate() runs and rebuilds it. However, Unity's
+    // Update() ordering is non-deterministic — an ant's AntUpdate can
+    // run BEFORE the gate's GateUpdate on the first frame after load.
+    //
+    // When that happens:
+    //   1. Ant calls ChooseNextTrail → CheckIfTrailGateSatisfied
+    //   2. TrailGate_Counter.CheckIfSatisfied iterates counterArea
+    //   3. counterArea is empty → nAnts = 0 → gate looks open
+    //   4. Ant passes through the full gate!
+    //
+    // Each save/load cycle leaks exactly one ant through the gate,
+    // causing ants to progressively "disappear" from the waiting queue.
+    //
+    // Fix: When updateArea is true (area not yet rebuilt), always
+    // return false (gate closed) to prevent any ant from passing.
+    [HarmonyPatch(typeof(TrailGate_Counter), "CheckIfSatisfied")]
+    public static class CounterGateLoadLeakFixPatch
+    {
+        [HarmonyPrefix]
+        static bool Prefix(TrailGate_Counter __instance, ref bool __result)
+        {
+            try
+            {
+                var updateAreaField = AccessTools.Field(typeof(TrailGate_Counter), "updateArea");
+                if (updateAreaField == null) return true;
+
+                bool needsUpdate = (bool)updateAreaField.GetValue(__instance);
+                if (needsUpdate)
+                {
+                    // Counter area hasn't been rebuilt yet — gate stays closed
+                    // to prevent ants from leaking through on the first frame.
+                    __result = false;
+                    return false; // skip original
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Spire/CounterGateFix] CheckIfSatisfied prefix failed: {ex.Message}");
+            }
+            return true; // let original run normally
+        }
+    }
+
     // 9. LoadLinks — resolve postponed building ID as Stockpile or BatteryBuilding
     [HarmonyPatch(typeof(TrailGate_Stockpile), "LoadLinks")]
     public static class StockpileGateLinksPatch
