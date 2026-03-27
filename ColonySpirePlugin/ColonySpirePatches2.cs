@@ -1120,10 +1120,10 @@ namespace ColonySpireMod
     // ================================================================
     [HarmonyPatch(typeof(UITechTreeBoxShape), "UpdateBox", new Type[] { typeof(TechStatus) })]
     public static class TechTreeColorPatch {
-        static readonly Color ColorT2      = new Color(0.55f, 0.40f, 1.0f, 1f);
-        static readonly Color ColorT3      = new Color(1.0f,  0.85f, 0.2f, 1f);
-        static readonly Color ColorGyneT1  = new Color(1.0f,  0.5f,  0.7f, 1f);
-        static readonly Color ColorGyneT2  = new Color(0.9f,  0.2f,  0.6f, 1f);
+        static readonly Color ColorT2      = new Color(0.0f,  0.0f,  0.8f, 1f);
+        static readonly Color ColorT3      = new Color(0.0f,  1.0f,  1.0f, 1f);
+        static readonly Color ColorGyneT1  = new Color(1.0f,  0.85f, 0.2f, 1f);
+        static readonly Color ColorGyneT2  = new Color(0.8f,  0.4f,  0.0f, 1f);
         static readonly Color ColorGyneT3  = new Color(0.7f,  0.1f,  0.2f, 1f);
 
         [HarmonyPostfix]
