@@ -11,7 +11,7 @@
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $gameDir   = (Resolve-Path "$scriptDir\..\..").Path
-$version   = "1.1.2"
+$version   = "1.1.4"
 
 Write-Host ""
 Write-Host "=== Colony Spire Mod - Release Builder ===" -ForegroundColor Cyan
@@ -241,6 +241,7 @@ $zipName = "ColonySpireMod_v$version.zip"
 $zipPath = Join-Path $scriptDir $zipName
 
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+Start-Sleep -Seconds 2 # Wait for AV scan to release lock on new DLL
 Compress-Archive -Path "$modDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
 
 # Cleanup staging

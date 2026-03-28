@@ -1128,13 +1128,17 @@ namespace ColonySpireMod
 
         [HarmonyPostfix]
         static void Postfix(UITechTreeBoxShape __instance, TechStatus _status) {
+            if (!ModState.enableTechTreeColors) return;
             try {
-                if (_status == TechStatus.NONE) return;
                 var box = __instance.GetComponentInParent<UITechTreeBox>();
                 if (box == null) return;
                 var techField = AccessTools.Field(typeof(UITechTreeBox), "tech");
                 if (techField == null) return;
                 var tech = techField.GetValue(box) as Tech;
+                // For NONE (undiscovered) items the private tech field may not be set yet,
+                // so fall back to resolving via the box's techCode
+                if (tech == null && !string.IsNullOrEmpty(box.techCode))
+                    tech = Tech.Get(box.techCode, "");
                 if (tech == null || tech.costs == null || tech.costs.Count == 0) return;
 
                 int highestInventorTier = 0;
@@ -1160,11 +1164,42 @@ namespace ColonySpireMod
 
                 if (tintColor == null) return;
 
-                var images = __instance.GetComponentsInChildren<UnityEngine.UI.Image>(true);
-                foreach (var img in images) {
-                    float a = img.color.a;
-                    if (a < 0.01f) continue;
-                    img.color = new Color(tintColor.Value.r, tintColor.Value.g, tintColor.Value.b, a);
+                var animsField = AccessTools.Field(typeof(UITechTreeBoxShape), "anims");
+                if (animsField != null) {
+                    var anims = animsField.GetValue(__instance) as System.Collections.IEnumerable;
+                    if (anims != null) {
+                        foreach (var animObj in anims) {
+                            var anim = animObj as UnityEngine.Component;
+                            if (anim == null) continue;
+                            var images = anim.GetComponentsInChildren<UnityEngine.UI.Image>(true);
+                            foreach (var img in images) {
+                                float a = img.color.a;
+                                if (a < 0.01f) continue;
+                                img.color = new Color(tintColor.Value.r, tintColor.Value.g, tintColor.Value.b, a);
+                            }
+                        }
+                    }
+                }
+
+                if (_status == TechStatus.OPEN) {
+                    var imImageField = AccessTools.Field(typeof(UITextImageButton), "imImage");
+                    var imImage = imImageField?.GetValue(__instance) as UnityEngine.UI.Image;
+                    
+                    Color tint = new Color(tintColor.Value.r, tintColor.Value.g, tintColor.Value.b, 1f);
+                    
+                    var allImages = __instance.GetComponentsInChildren<UnityEngine.UI.Image>(true);
+                    foreach (var img in allImages) {
+                        if (img == imImage) continue; // Skip the item icon itself
+                        float originalA = img.color.a;
+                        if (originalA < 0.01f) continue;
+
+                        float targetAlpha = 0.6f;
+                        if (originalA < 0.6f) {
+                            targetAlpha = originalA; // Preserve faint gradients/shadows naturally
+                        }
+                        
+                        img.color = new Color(tint.r, tint.g, tint.b, targetAlpha);
+                    }
                 }
             } catch (Exception ex) {
                 Debug.Log($"[Spire] TechTreeColor: {ex.Message}");

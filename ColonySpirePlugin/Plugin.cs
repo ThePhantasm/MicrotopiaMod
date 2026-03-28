@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace ColonySpireMod
 {
-    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.3")]
+    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.4")]
     public class ColonySpirePlugin : BaseUnityPlugin
     {
         public static BepInEx.Logging.ManualLogSource Log;
@@ -124,13 +124,24 @@ namespace ColonySpireMod
                 Logger.LogInfo("[Improvement] Divider Save Fix: ENABLED");
                 patchClasses.AddRange(new[] {
                     typeof(DividerSortFixPatch),
-                    typeof(DividerSaveFixPatch),
                     typeof(DividerLoadFixPatch),
                     typeof(DividerChooseSafetyPatch),
                     typeof(CounterGateLoadLeakFixPatch),
                 });
             } else {
                 Logger.LogInfo("[Improvement] Divider Save Fix: DISABLED");
+            }
+
+            // Bridge Save/Load Fix
+            if (ModState.enableBridgeFix) {
+                Logger.LogInfo("[Improvement] Bridge Save/Load Fix: ENABLED");
+                patchClasses.AddRange(new[] {
+                    typeof(BridgeInitLoadFixPatch),
+                    typeof(BridgeDemolishNullGuardPatch),
+                    typeof(BridgeDropPickupNullGuardPatch),
+                });
+            } else {
+                Logger.LogInfo("[Improvement] Bridge Save/Load Fix: DISABLED");
             }
 
             // Colored Trails
@@ -226,7 +237,9 @@ namespace ColonySpireMod
         public static bool enableColoredTrails = true;
         public static bool enableBatteryGates  = true;
         public static bool enableDividerFix    = true;
+        public static bool enableBridgeFix     = true;
         public static bool enableColonySpire   = true;
+        public static bool enableTechTreeColors = true;
 
         // Sentinel hatching state
         public static float sentinelHatchTimer = -1f;
@@ -395,6 +408,8 @@ namespace ColonySpireMod
         const string KEY_FEAT_TRAILS   = "CSP_FeatTrails";
         const string KEY_FEAT_BATTERY  = "CSP_FeatBattery";
         const string KEY_FEAT_DIVIDER  = "CSP_FeatDividerFix";
+        const string KEY_FEAT_BRIDGE   = "CSP_FeatBridgeFix";
+        const string KEY_FEAT_TECHCOLORS = "CSP_FeatTechColors";
         const string KEY_FEAT_MASTER   = "CSP_FeatMaster";
 
         public static void SaveSettings() {
@@ -405,6 +420,8 @@ namespace ColonySpireMod
             PlayerPrefs.SetInt(KEY_FEAT_TRAILS,   ModState.enableColoredTrails ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_BATTERY,  ModState.enableBatteryGates ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_DIVIDER,  ModState.enableDividerFix ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_BRIDGE,   ModState.enableBridgeFix ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_TECHCOLORS, ModState.enableTechTreeColors ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_MASTER,   ModState.enableColonySpire ? 1 : 0);
             PlayerPrefs.Save();
         }
@@ -456,6 +473,8 @@ namespace ColonySpireMod
             ModState.enableColoredTrails = PlayerPrefs.GetInt(KEY_FEAT_TRAILS,   1) != 0;
             ModState.enableBatteryGates  = PlayerPrefs.GetInt(KEY_FEAT_BATTERY,  1) != 0;
             ModState.enableDividerFix    = PlayerPrefs.GetInt(KEY_FEAT_DIVIDER,  1) != 0;
+            ModState.enableBridgeFix     = PlayerPrefs.GetInt(KEY_FEAT_BRIDGE,   1) != 0;
+            ModState.enableTechTreeColors= PlayerPrefs.GetInt(KEY_FEAT_TECHCOLORS, 1) != 0;
             ModState.enableColonySpire   = PlayerPrefs.GetInt(KEY_FEAT_MASTER,   1) != 0;
             Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores} Scale={ModState.islandScale}");
             Debug.Log($"[Spire] Features: Prestige={ModState.enablePrestige} Combat={ModState.enableCombat} Trails={ModState.enableColoredTrails} Battery={ModState.enableBatteryGates}");
@@ -484,6 +503,11 @@ namespace ColonySpireMod
                     () => ModState.enableDividerFix,
                     v => { ModState.enableDividerFix = v; ModSave.SaveSettings(); });
 
+                SetupFeatureToggle(__instance, addSettingMethod, "Bridge Save/Load Fix",
+                    "Fix vanilla bug where bridges corrupt on save/load (position, deletion, materials)",
+                    () => ModState.enableBridgeFix,
+                    v => { ModState.enableBridgeFix = v; ModSave.SaveSettings(); });
+
                 SetupFeatureToggle(__instance, addSettingMethod, "Colored Trails",
                     "Color variants for Main Bus trails",
                     () => ModState.enableColoredTrails,
@@ -493,6 +517,11 @@ namespace ColonySpireMod
                     "Stockpile gates can target battery",
                     () => ModState.enableBatteryGates,
                     v => { ModState.enableBatteryGates = v; ModSave.SaveSettings(); });
+
+                SetupFeatureToggle(__instance, addSettingMethod, "Tech Tree Colors",
+                    "Color variants for tech tree halos",
+                    () => ModState.enableTechTreeColors,
+                    v => { ModState.enableTechTreeColors = v; ModSave.SaveSettings(); });
 
                 // ── Section: Colony Spire Mod (master + sub-toggles) ──
                 var blankMaster = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);

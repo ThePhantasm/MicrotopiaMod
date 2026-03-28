@@ -92,60 +92,11 @@ namespace ColonySpireMod
         }
     }
 
-    // Part B: Before saving, translate dividerI to the trail's linkId
-    // so we persist a stable identifier instead of a fragile index.
-    //
-    // We store the linkId into dividerI itself (since linkIds are always > 0
-    // during save, and normal dividerI values are small indices starting at 0,
-    // we mark it by adding a large offset so the load-side can detect it).
-    [HarmonyPatch(typeof(Split), "Write")]
-    public static class DividerSaveFixPatch {
-        // We use a ConditionalWeakTable to stash the REAL dividerI so we can
-        // restore it after Write() completes (we don't want to corrupt
-        // the live game state).
-        static readonly ConditionalWeakTable<Split, StrongBox<int>> _savedDividerI = new();
-
-        [HarmonyPrefix]
-        static void Prefix(Split __instance) {
-            try {
-                var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
-                var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
-                if (dividerIField == null || dividerTrailsField == null) return;
-
-                int dividerI = (int)dividerIField.GetValue(__instance);
-                var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
-                if (dividerTrails == null || dividerTrails.Count == 0) return;
-
-                // Stash original dividerI so we can restore it in Postfix
-                if (_savedDividerI.TryGetValue(__instance, out var box))
-                    box.Value = dividerI;
-                else
-                    _savedDividerI.Add(__instance, new StrongBox<int>(dividerI));
-
-                // Replace dividerI with the trail's linkId (shifted by 100000
-                // to distinguish from normal small indices on the load side)
-                if (dividerI >= 0 && dividerI < dividerTrails.Count) {
-                    int linkId = dividerTrails[dividerI].linkId;
-                    if (linkId > 0) {
-                        dividerIField.SetValue(__instance, linkId + 100000);
-                    }
-                }
-            } catch (Exception ex) {
-                Debug.LogError($"[Spire/DividerFix] Save prefix failed: {ex.Message}");
-            }
-        }
-
-        [HarmonyPostfix]
-        static void Postfix(Split __instance) {
-            try {
-                // Restore the real dividerI so the running game isn't affected
-                if (_savedDividerI.TryGetValue(__instance, out var box)) {
-                    var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
-                    dividerIField?.SetValue(__instance, box.Value);
-                }
-            } catch { }
-        }
-    }
+    // Part B: REMOVED.
+    // We used to translate dividerI to linkId + 100000 here, but doing so modifying
+    // the vanilla save file caused hard crashes (ArgumentOutOfRangeException in DividerChoose)
+    // if the user ever uninstalled the mod. The deterministic sort is sufficient to
+    // keep indices consistent, so we just let vanilla save the raw deterministically-sorted index.
 
     // Part C: No longer needed as a separate patch — the linkId→index
     // translation is now handled in Part A's Postfix on UpdateDividerTrails,
@@ -752,6 +703,192 @@ namespace ColonySpireMod
             }
 
             return false; // skip original
+        }
+    }
+
+    // ================================================================
+    // BRIDGE SAVE/LOAD BUG FIX
+    // ================================================================
+    // Vanilla bug: partially-constructed bridges corrupt on save/load.
+    //
+    // Root causes:
+    //   1. GetGroundOtherEnd() probes a single world-space point to
+    //      locate the far island. If Y-rotation precision drifts even
+    //      slightly across WriteYRot/ReadYRot, the probe misses.
+    //   2. otherGround becomes null → DemolishBuildings crashes with
+    //      NullReferenceException → delete button does nothing.
+    //   3. Trail Split positions are saved as absolute coords, but
+    //      geometry is rebuilt from direction, so paths float.
+    //
+    // Fix strategy (all in-memory, does NOT touch save format):
+    //   A) After Bridge.Recreate on load, if otherGround is null,
+    //      retry with a wider ground search and fix midPos/topPoint.
+    //   B) Null-guard DemolishBuildings so null otherGround can't crash.
+    //   C) Safety postfix on GetGroundOtherEnd to try wider probes.
+    // ================================================================
+
+    // Part A: After Bridge.Init (during_load=true), validate and fix
+    // otherGround if the probe missed.
+    [HarmonyPatch(typeof(Bridge), "Init")]
+    public static class BridgeInitLoadFixPatch
+    {
+        [HarmonyPostfix]
+        static void Postfix(Bridge __instance, bool during_load)
+        {
+            if (!during_load) return;
+            try
+            {
+                var otherGroundField = AccessTools.Field(typeof(Bridge), "otherGround");
+                if (otherGroundField == null) return;
+
+                var otherGround = otherGroundField.GetValue(__instance) as Ground;
+                if (otherGround != null) return; // probe succeeded, nothing to fix
+
+                // otherGround is null — the direction probe missed.
+                // Try to find the ground using a wider search.
+                var nPiecesField = AccessTools.Field(typeof(Bridge), "nPieces");
+                var pieceLengthField = AccessTools.Field(typeof(Bridge), "pieceLength");
+                var connectPointField = AccessTools.Field(typeof(Bridge), "connectPoint");
+                var midPosField = AccessTools.Field(typeof(Bridge), "midPos");
+
+                if (nPiecesField == null || pieceLengthField == null || connectPointField == null) return;
+
+                int nPieces = (int)nPiecesField.GetValue(__instance);
+                float pieceLength = (float)pieceLengthField.GetValue(__instance);
+                Transform connectPoint = connectPointField.GetValue(__instance) as Transform;
+                if (connectPoint == null) return;
+
+                // Get the bridge direction (same as GetDir())
+                Vector3 dir = __instance.transform.TransformDirection(connectPoint.localPosition).SetY(0f).normalized;
+                float cpMag = connectPoint.localPosition.SetY(0f).magnitude;
+
+                // Try multiple probe distances (wider fan) to find the ground
+                Ground foundGround = null;
+                float baseDistance = (float)nPieces * pieceLength + cpMag * 3f;
+
+                // Try offsets: exact, ±10%, ±20%, ±30%
+                float[] offsets = { 0f, 0.1f, -0.1f, 0.2f, -0.2f, 0.3f, -0.3f };
+                foreach (float offset in offsets)
+                {
+                    float dist = baseDistance * (1f + offset);
+                    Vector3 probePos = __instance.transform.position + dir * dist;
+                    foundGround = Toolkit.GetGround(probePos);
+                    if (foundGround != null && foundGround != __instance.ground)
+                    {
+                        break;
+                    }
+                    foundGround = null;
+                }
+
+                // Also try lateral offsets if straight probes failed
+                if (foundGround == null)
+                {
+                    Vector3 lateral = Vector3.Cross(dir, Vector3.up).normalized;
+                    float[] lateralOffsets = { 5f, -5f, 10f, -10f };
+                    foreach (float latOff in lateralOffsets)
+                    {
+                        Vector3 probePos = __instance.transform.position + dir * baseDistance + lateral * latOff;
+                        foundGround = Toolkit.GetGround(probePos);
+                        if (foundGround != null && foundGround != __instance.ground)
+                        {
+                            break;
+                        }
+                        foundGround = null;
+                    }
+                }
+
+                if (foundGround != null)
+                {
+                    otherGroundField.SetValue(__instance, foundGround);
+                    Debug.Log($"[Spire/BridgeFix] Fixed null otherGround for bridge at {__instance.transform.position}");
+                }
+                else
+                {
+                    Debug.LogWarning($"[Spire/BridgeFix] Could not find otherGround for bridge at {__instance.transform.position} — demolish may fail");
+                }
+
+                // Also fix midPos (used for topPoint and insert position)
+                if (midPosField != null)
+                {
+                    Vector3 midPos = connectPoint.position + dir * ((float)nPieces * pieceLength * 0.5f);
+                    midPosField.SetValue(__instance, midPos);
+
+                    // Update topPoint to match new midPos
+                    if (__instance.topPoint != null)
+                    {
+                        __instance.topPoint.position = new Vector3(midPos.x, __instance.topPoint.position.y, midPos.z);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Spire/BridgeFix] Init postfix failed: {ex.Message}");
+            }
+        }
+    }
+
+    // Part B: Null-guard DemolishBuildings — prevent NullRef when
+    // otherGround is null for a corrupted bridge.
+    [HarmonyPatch(typeof(Building), "DemolishBuildings")]
+    public static class BridgeDemolishNullGuardPatch
+    {
+        [HarmonyPrefix]
+        static void Prefix(List<Building> buildings)
+        {
+            // Pre-scan for Bridge instances with null otherGround
+            // and attempt last-resort ground resolution.
+            try
+            {
+                foreach (var building in buildings)
+                {
+                    if (building is Bridge bridge)
+                    {
+                        var otherGroundField = AccessTools.Field(typeof(Bridge), "otherGround");
+                        if (otherGroundField == null) continue;
+
+                        var otherGround = otherGroundField.GetValue(bridge) as Ground;
+                        if (otherGround == null && bridge.ground != null)
+                        {
+                            // Last resort: just use the same ground as the start side.
+                            // This ensures DemolishBuildings won't crash, and the refunded
+                            // materials will go to the starting island's stockpiles.
+                            otherGroundField.SetValue(bridge, bridge.ground);
+                            Debug.LogWarning($"[Spire/BridgeFix] DemolishBuildings: patched null otherGround → same as start ground for bridge at {bridge.transform.position}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Spire/BridgeFix] DemolishBuildings prefix failed: {ex.Message}");
+            }
+        }
+    }
+
+    // Part C: Null-guard Bridge.DropPickupOnDemolish — if otherGround
+    // is null, prevent crash when trying to exchange pickups.
+    [HarmonyPatch(typeof(Bridge), "DropPickupOnDemolish")]
+    public static class BridgeDropPickupNullGuardPatch
+    {
+        [HarmonyPrefix]
+        static void Prefix(Bridge __instance)
+        {
+            try
+            {
+                var otherGroundField = AccessTools.Field(typeof(Bridge), "otherGround");
+                if (otherGroundField == null) return;
+
+                var otherGround = otherGroundField.GetValue(__instance) as Ground;
+                if (otherGround == null && __instance.ground != null)
+                {
+                    otherGroundField.SetValue(__instance, __instance.ground);
+                    Debug.LogWarning($"[Spire/BridgeFix] DropPickupOnDemolish: patched null otherGround for bridge at {__instance.transform.position}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Spire/BridgeFix] DropPickupOnDemolish prefix failed: {ex.Message}");
+            }
         }
     }
 }

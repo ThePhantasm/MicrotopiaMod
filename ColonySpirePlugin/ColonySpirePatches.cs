@@ -576,8 +576,7 @@ namespace ColonySpireMod
             if (casteField == null) return true;
             int caste = (int)casteField.GetValue(ant);
             if (caste != ModState.OMNI_ANT_CASTE_ID) {
-                __result = false;
-                return false;
+                return true;
             }
 
             bool isElder = false;
