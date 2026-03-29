@@ -72,10 +72,7 @@ if (Test-Path $bepinexCoreSrc) {
     Write-Host "  Copied: BepInEx/core/" -ForegroundColor Gray
 }
 
-# Create empty required directories
-foreach ($dir in @("plugins", "patchers", "config")) {
-    New-Item (Join-Path $bepinexDst $dir) -ItemType Directory | Out-Null
-}
+
 
 # Copy doorstop files
 if (Test-Path $doorstopSrc) {
