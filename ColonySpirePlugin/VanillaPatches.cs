@@ -152,11 +152,22 @@ namespace ColonySpireMod
                 int dividerI = (int)dividerIField.GetValue(__instance);
                 if (dividerI < 0 || dividerI >= dividerTrails.Count) {
                     // Clamp to 0 and fix the field
+                    dividerI = 0;
                     dividerIField.SetValue(__instance, 0);
                     Debug.LogWarning($"[Spire/DividerFix] Clamped out-of-range dividerI to 0 (count={dividerTrails.Count})");
                 }
+
+                // FIX: Fast-forward dividerI if it currently points to a gate
+                // This prevents the bug where the first ant is forced down a gated path
+                // because dividerI initially started on it.
+                for (int i = 0; i < dividerTrails.Count; i++) {
+                    if (!dividerTrails[dividerI].IsGate()) break;
+                    dividerI = (dividerI + 1) % dividerTrails.Count;
+                }
+                dividerIField.SetValue(__instance, dividerI);
+
             } catch { }
-            return true; // let original run (now with safe dividerI)
+            return true; // let original run (now with safe and gate-bypassed dividerI)
         }
     }
 
