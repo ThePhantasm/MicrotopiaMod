@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace ColonySpireMod
 {
-    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.5")]
+    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.6")]
     public class ColonySpirePlugin : BaseUnityPlugin
     {
         public static BepInEx.Logging.ManualLogSource Log;
@@ -131,6 +131,15 @@ namespace ColonySpireMod
             } else {
                 Logger.LogInfo("[Improvement] Divider Save Fix: DISABLED");
             }
+            
+            // Game Speed Feature
+            if (ModState.enableGameSpeed) {
+                Logger.LogInfo("[Improvement] Game Speed: ENABLED");
+                patchClasses.Add(typeof(GameSpeedPatch));
+            } else {
+                Logger.LogInfo("[Improvement] Game Speed: DISABLED");
+            }
+
 
             // Bridge Save/Load Fix
             if (ModState.enableBridgeFix) {
@@ -240,6 +249,7 @@ namespace ColonySpireMod
         public static bool enableBridgeFix     = true;
         public static bool enableColonySpire   = true;
         public static bool enableTechTreeColors = true;
+        public static bool enableGameSpeed     = true;
 
         // Sentinel hatching state
         public static float sentinelHatchTimer = -1f;
@@ -410,6 +420,7 @@ namespace ColonySpireMod
         const string KEY_FEAT_DIVIDER  = "CSP_FeatDividerFix";
         const string KEY_FEAT_BRIDGE   = "CSP_FeatBridgeFix";
         const string KEY_FEAT_TECHCOLORS = "CSP_FeatTechColors";
+        const string KEY_FEAT_GAMESPEED = "CSP_FeatGameSpeed";
         const string KEY_FEAT_MASTER   = "CSP_FeatMaster";
 
         public static void SaveSettings() {
@@ -422,6 +433,7 @@ namespace ColonySpireMod
             PlayerPrefs.SetInt(KEY_FEAT_DIVIDER,  ModState.enableDividerFix ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_BRIDGE,   ModState.enableBridgeFix ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_TECHCOLORS, ModState.enableTechTreeColors ? 1 : 0);
+            PlayerPrefs.SetInt(KEY_FEAT_GAMESPEED, ModState.enableGameSpeed ? 1 : 0);
             PlayerPrefs.SetInt(KEY_FEAT_MASTER,   ModState.enableColonySpire ? 1 : 0);
             PlayerPrefs.Save();
         }
@@ -475,6 +487,7 @@ namespace ColonySpireMod
             ModState.enableDividerFix    = PlayerPrefs.GetInt(KEY_FEAT_DIVIDER,  1) != 0;
             ModState.enableBridgeFix     = PlayerPrefs.GetInt(KEY_FEAT_BRIDGE,   1) != 0;
             ModState.enableTechTreeColors= PlayerPrefs.GetInt(KEY_FEAT_TECHCOLORS, 1) != 0;
+            ModState.enableGameSpeed     = PlayerPrefs.GetInt(KEY_FEAT_GAMESPEED, 1) != 0;
             ModState.enableColonySpire   = PlayerPrefs.GetInt(KEY_FEAT_MASTER,   1) != 0;
             Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores} Scale={ModState.islandScale}");
             Debug.Log($"[Spire] Features: Prestige={ModState.enablePrestige} Combat={ModState.enableCombat} Trails={ModState.enableColoredTrails} Battery={ModState.enableBatteryGates}");
@@ -522,6 +535,11 @@ namespace ColonySpireMod
                     "Color variants for tech tree halos",
                     () => ModState.enableTechTreeColors,
                     v => { ModState.enableTechTreeColors = v; ModSave.SaveSettings(); });
+
+                SetupFeatureToggle(__instance, addSettingMethod, "Game Speed Buttons",
+                    "Add 1x, 2x, 4x buttons to the game HUD",
+                    () => ModState.enableGameSpeed,
+                    v => { ModState.enableGameSpeed = v; ModSave.SaveSettings(); });
 
                 // ── Section: Colony Spire Mod (master + sub-toggles) ──
                 var blankMaster = (UISettings_Setting)addSettingMethod.Invoke(__instance, new object[0]);

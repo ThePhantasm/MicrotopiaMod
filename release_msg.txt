@@ -1,4 +1,0 @@
-feat: v1.1.5 — Divider and installer fixes
-
-- Fixed divider logic to aggressively skip gates, preventing the 'first-ant forcing' bug
-- Removed empty folder creation in the build script to prevent the 0-byte zip file bug
