@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace ColonySpireMod
 {
-    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.6")]
+    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.7")]
     public class ColonySpirePlugin : BaseUnityPlugin
     {
         public static BepInEx.Logging.ManualLogSource Log;

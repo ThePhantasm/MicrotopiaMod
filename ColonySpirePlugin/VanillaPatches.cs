@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using HarmonyLib;
 using UnityEngine;
@@ -650,33 +651,48 @@ namespace ColonySpireMod
     // Each save/load cycle leaks exactly one ant through the gate,
     // causing ants to progressively "disappear" from the waiting queue.
     //
-    // Fix: When updateArea is true (area not yet rebuilt), always
-    // return false (gate closed) to prevent any ant from passing.
+    // Fix: Instead of BLOCKING the ant (which breaks complex collider
+    // systems by corrupting their routing state), we force-rebuild the
+    // counterArea on-the-spot if it hasn't been built yet. This gives
+    // CheckIfSatisfied correct data to evaluate with immediately —
+    // no blocking, no red flash, no ant leak.
     [HarmonyPatch(typeof(TrailGate_Counter), "CheckIfSatisfied")]
     public static class CounterGateLoadLeakFixPatch
     {
+        static readonly FieldInfo _updateAreaField = AccessTools.Field(typeof(TrailGate_Counter), "updateArea");
+        static readonly FieldInfo _counterAreaField = AccessTools.Field(typeof(TrailGate_Counter), "counterArea");
+        static readonly FieldInfo _areaInvalidField = AccessTools.Field(typeof(TrailGate_Counter), "areaInvalid");
+        static readonly FieldInfo _counterAreaBuildingsField = AccessTools.Field(typeof(TrailGate_Counter), "counterArea_buildings");
+        static readonly FieldInfo _areaModeField = AccessTools.Field(typeof(TrailGate_Counter), "areaMode");
+        static readonly FieldInfo _ownerTrailField = AccessTools.Field(typeof(TrailGate), "ownerTrail");
+
         [HarmonyPrefix]
-        static bool Prefix(TrailGate_Counter __instance, ref bool __result)
+        static void Prefix(TrailGate_Counter __instance)
         {
             try
             {
-                var updateAreaField = AccessTools.Field(typeof(TrailGate_Counter), "updateArea");
-                if (updateAreaField == null) return true;
+                if (_updateAreaField == null || _ownerTrailField == null) return;
 
-                bool needsUpdate = (bool)updateAreaField.GetValue(__instance);
-                if (needsUpdate)
-                {
-                    // Counter area hasn't been rebuilt yet — gate stays closed
-                    // to prevent ants from leaking through on the first frame.
-                    __result = false;
-                    return false; // skip original
-                }
+                bool needsUpdate = (bool)_updateAreaField.GetValue(__instance);
+                if (!needsUpdate) return;
+
+                // Counter area hasn't been rebuilt yet — force rebuild NOW
+                // so CheckIfSatisfied evaluates with correct data.
+                var ownerTrail = _ownerTrailField.GetValue(__instance) as Trail;
+                if (ownerTrail == null) return;
+
+                var areaMode = (AreaMode)_areaModeField.GetValue(__instance);
+                var counterArea = ownerTrail.GetCounterArea(areaMode, out bool areaInvalid, out var counterAreaBuildings);
+
+                _counterAreaField.SetValue(__instance, counterArea);
+                _areaInvalidField.SetValue(__instance, areaInvalid);
+                _counterAreaBuildingsField.SetValue(__instance, counterAreaBuildings);
+                _updateAreaField.SetValue(__instance, false);
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[Spire/CounterGateFix] CheckIfSatisfied prefix failed: {ex.Message}");
+                Debug.LogError($"[Spire/CounterGateFix] Area rebuild failed: {ex.Message}");
             }
-            return true; // let original run normally
         }
     }
 
