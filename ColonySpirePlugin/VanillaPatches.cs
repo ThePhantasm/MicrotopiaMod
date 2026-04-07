@@ -43,31 +43,36 @@ namespace ColonySpireMod
                 var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
                 if (dividerTrails == null || dividerTrails.Count <= 0) return;
 
-                // Step 1: Re-sort using a stable local reference direction to preserve
+                // Step 1: Re-sort using a stable geometric anchor to preserve
                 // blueprint rotation while fixing save/load non-determinism.
-                // Best topological anchor is the INCOMING trail (splitEnd == this).
-                // If none (e.g. at Queen), fallback to oldest linkId.
+                // Because blueprint save logic iterates HashSet, the construction order
+                // and linkIds are entirely scrambled in copies-of-copies. 
+                // We find the path following the largest angular gap and use it as Anchor.
                 if (dividerTrails.Count > 1) {
-                    Trail refTrail = dividerTrails[0];
-                    
-                    // 1. Try to find the incoming trail
-                    bool foundIncoming = false;
-                    foreach (var t in __instance.connectedTrails) {
-                        if (t != null && t.splitEnd == __instance) {
-                            refTrail = t;
-                            foundIncoming = true;
-                            break;
-                        }
+                    var angles = new List<KeyValuePair<Trail, float>>();
+                    foreach (var t in dividerTrails) {
+                        float angle = CalculateClockAngle(Vector3.forward, t.direction);
+                        angles.Add(new KeyValuePair<Trail, float>(t, angle));
                     }
                     
-                    // 2. If no incoming trail, fallback to oldest loaded trail
-                    if (!foundIncoming) {
-                        int minId = int.MaxValue;
-                        foreach (var t in dividerTrails) {
-                            if (t.linkId > 0 && t.linkId < minId) {
-                                minId = t.linkId;
-                                refTrail = t;
-                            }
+                    // Sort by absolute clock angle ascending
+                    angles.Sort((a, b) => a.Value.CompareTo(b.Value));
+                    
+                    // Find the largest angular gap
+                    float maxGap = -1f;
+                    Trail refTrail = angles[0].Key; // Fallback
+                    
+                    for (int i = 0; i < angles.Count; i++) {
+                        var current = angles[i];
+                        var next = angles[(i + 1) % angles.Count];
+                        
+                        float gap = next.Value - current.Value;
+                        if (gap < 0) gap += 360f; // Wrap around
+                        
+                        // Tie breaker included for minor floating point inaccuracies
+                        if (gap > maxGap + 0.001f) {
+                            maxGap = gap;
+                            refTrail = next.Key; // The trail clockwise AFTER the gap
                         }
                     }
 
@@ -77,33 +82,6 @@ namespace ColonySpireMod
                         float angleB = CalculateClockAngle(refDir, b.direction);
                         return angleA.CompareTo(angleB);
                     });
-                }
-
-                // Step 2: If loading, translate encoded linkId back to index.
-                // We encoded dividerI = linkId + 100000 during save (Part B).
-                // Now that dividerTrails is populated and sorted, find the
-                // matching trail and set dividerI to its position.
-                int dividerI = (int)dividerIField.GetValue(__instance);
-                if (during_load && dividerI >= 100000) {
-                    int savedLinkId = dividerI - 100000;
-                    int newIndex = -1;
-                    for (int i = 0; i < dividerTrails.Count; i++) {
-                        if (dividerTrails[i].linkId == savedLinkId) {
-                            newIndex = i;
-                            break;
-                        }
-                    }
-                    if (newIndex >= 0) {
-                        dividerIField.SetValue(__instance, newIndex);
-                        
-                        // Re-invoke UpdatePointer with the corrected dividerI
-                        var updatePointer = AccessTools.Method(typeof(Split), "UpdatePointer");
-                        updatePointer?.Invoke(__instance, new object[] { true });
-                    }
-                    // DO NOT reset to 0 here if not found!
-                    // Trails are loaded and added sequentially. This method is called repeatedly
-                    // as each trail connects. If we reset to 0 when the target trail hasn't been
-                    // loaded yet, we corrupt the saved linkId and ruin the restoration.
                 }
             } catch (Exception ex) {
                 Debug.LogError($"[Spire/DividerFix] Sort/load fix failed: {ex.Message}");
