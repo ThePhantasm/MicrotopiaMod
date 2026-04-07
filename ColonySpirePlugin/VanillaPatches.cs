@@ -757,6 +757,32 @@ namespace ColonySpireMod
         }
     }
 
+    // 10. CopyFrom — copy battery reference when cloning gates
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "CopyFrom")]
+    public static class StockpileGateCopyPatch
+    {
+        [HarmonyPostfix]
+        static void Postfix(TrailGate_Stockpile __instance, TrailGate other, TrailGate.GateCopyMode copy_mode)
+        {
+            if (other is TrailGate_Stockpile srcGate)
+            {
+                var srcBattery = BatteryGateState.GetBattery(srcGate);
+                BatteryGateState.SetBattery(__instance, srcBattery);
+            }
+        }
+    }
+
+    // 11. CleanObjectLinks — clear battery reference cleanly
+    [HarmonyPatch(typeof(TrailGate_Stockpile), "CleanObjectLinks")]
+    public static class StockpileGateCleanLinksPatch
+    {
+        [HarmonyPostfix]
+        static void Postfix(TrailGate_Stockpile __instance)
+        {
+            BatteryGateState.SetBattery(__instance, null);
+        }
+    }
+
     // ================================================================
     // BRIDGE SAVE/LOAD BUG FIX
     // ================================================================
