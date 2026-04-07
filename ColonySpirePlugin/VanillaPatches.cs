@@ -44,17 +44,33 @@ namespace ColonySpireMod
                 if (dividerTrails == null || dividerTrails.Count <= 0) return;
 
                 // Step 1: Re-sort using a stable local reference direction to preserve
-                // blueprint rotation while fixing the save/load non-determinism.
-                // We pick the trail with the lowest linkId (oldest), or dividerTrails[0] for unsaved blueprints.
+                // blueprint rotation while fixing save/load non-determinism.
+                // Best topological anchor is the INCOMING trail (splitEnd == this).
+                // If none (e.g. at Queen), fallback to oldest linkId.
                 if (dividerTrails.Count > 1) {
                     Trail refTrail = dividerTrails[0];
-                    int minId = int.MaxValue;
-                    foreach (var t in dividerTrails) {
-                        if (t.linkId > 0 && t.linkId < minId) {
-                            minId = t.linkId;
+                    
+                    // 1. Try to find the incoming trail
+                    bool foundIncoming = false;
+                    foreach (var t in __instance.connectedTrails) {
+                        if (t != null && t.splitEnd == __instance) {
                             refTrail = t;
+                            foundIncoming = true;
+                            break;
                         }
                     }
+                    
+                    // 2. If no incoming trail, fallback to oldest loaded trail
+                    if (!foundIncoming) {
+                        int minId = int.MaxValue;
+                        foreach (var t in dividerTrails) {
+                            if (t.linkId > 0 && t.linkId < minId) {
+                                minId = t.linkId;
+                                refTrail = t;
+                            }
+                        }
+                    }
+
                     Vector3 refDir = refTrail.direction;
                     dividerTrails.Sort((Trail a, Trail b) => {
                         float angleA = CalculateClockAngle(refDir, a.direction);

@@ -11,7 +11,7 @@
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $gameDir   = (Resolve-Path "$scriptDir\..\..").Path
-$version   = "1.1.8"
+$version   = "1.1.9"
 
 Write-Host ""
 Write-Host "=== Colony Spire Mod - Release Builder ===" -ForegroundColor Cyan
