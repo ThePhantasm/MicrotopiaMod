@@ -43,11 +43,19 @@ namespace ColonySpireMod
                 var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
                 if (dividerTrails == null || dividerTrails.Count <= 0) return;
 
-                // Step 1: Re-sort using Vector3.forward as the absolute reference
-                // direction instead of the first trail's direction (which depends
-                // on HashSet insertion order and is non-deterministic across loads)
+                // Step 1: Re-sort using a stable local reference direction to preserve
+                // blueprint rotation while fixing the save/load non-determinism.
+                // We pick the trail with the lowest linkId (oldest), or dividerTrails[0] for unsaved blueprints.
                 if (dividerTrails.Count > 1) {
-                    Vector3 refDir = Vector3.forward;
+                    Trail refTrail = dividerTrails[0];
+                    int minId = int.MaxValue;
+                    foreach (var t in dividerTrails) {
+                        if (t.linkId > 0 && t.linkId < minId) {
+                            minId = t.linkId;
+                            refTrail = t;
+                        }
+                    }
+                    Vector3 refDir = refTrail.direction;
                     dividerTrails.Sort((Trail a, Trail b) => {
                         float angleA = CalculateClockAngle(refDir, a.direction);
                         float angleB = CalculateClockAngle(refDir, b.direction);
@@ -916,6 +924,33 @@ namespace ColonySpireMod
             {
                 Debug.LogError($"[Spire/BridgeFix] DropPickupOnDemolish prefix failed: {ex.Message}");
             }
+        }
+    }
+
+    // ================================================================
+    // BUG FIX: ANT FREEZING AT OBSCURE INTERSECTIONS
+    //   If an ant's energy depleted (burst bulb) and its caste changed
+    //   while actively crossing a fork, it could get permanently stuck
+    //   due to dropping the fork's state handshake & gate authorization.
+    //   This delays death (caste change) by short duration if it's right on a fork.
+    // ================================================================
+
+    [HarmonyPatch(typeof(Ant), "MayDie")]
+    public static class AntMayDieForkSafetyPatch {
+        [HarmonyPostfix]
+        static void Postfix(Ant __instance, ref bool __result) {
+            try {
+                if (__result && __instance.currentTrail != null) {
+                    float distToEnd = (1f - __instance.trailProgress) * __instance.currentTrail.length;
+                    float distToStart = __instance.trailProgress * __instance.currentTrail.length;
+                    
+                    // Delay death if it's within 1.5 units of a trail connection
+                    // (Unless the trail is a purely linear command trail)
+                    if ((distToEnd < 1.5f || distToStart < 1.5f) && __instance.currentTrail.trailType != TrailType.COMMAND) {
+                        __result = false;
+                    }
+                }
+            } catch { }
         }
     }
 }
