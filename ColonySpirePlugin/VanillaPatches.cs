@@ -116,10 +116,10 @@ namespace ColonySpireMod
     }
 
     // ================================================================
-    // FLAAAWLESS DIVIDER FIX: Local-Rotation Sort + String Encoding
+    // FLAAAWLESS DIVIDER FIX: Absolute Compass Sort + Topological Schema Encoder
     // ================================================================
     public static class BlueprintState {
-        public static Dictionary<int, int> dividerIbySplitIndex = new Dictionary<int, int>();
+        public static Dictionary<int, int> schemaTargetByIndex = new Dictionary<int, int>();
     }
 
     [HarmonyPatch(typeof(BuildingEditing), "CreateBlueprint")]
@@ -127,19 +127,34 @@ namespace ColonySpireMod
         [HarmonyPostfix]
         static void Postfix(BuildingEditing __instance) {
             try {
-                var curBlueprint = AccessTools.Field(typeof(BuildingEditing), "curBlueprint").GetValue(__instance) as Blueprint;
+                var curBlueprint = AccessTools.Field(typeof(BuildingEditing), "curBlueprint")?.GetValue(__instance) as Blueprint;
                 if (curBlueprint != null && curBlueprint.splits != null) {
-                    BlueprintState.dividerIbySplitIndex.Clear();
-                    string payload = "||DIV[";
+                    BlueprintState.schemaTargetByIndex.Clear();
+                    string payload = "||TGT[";
                     for (int i = 0; i < curBlueprint.splits.Count; i++) {
                         var bpSplit = curBlueprint.splits[i];
-                        int divI = 0;
+                        int targetSchemaIdx = -1;
                         if (bpSplit.split != null) {
                             var divField = AccessTools.Field(typeof(Split), "dividerI");
-                            if (divField != null) divI = (int)divField.GetValue(bpSplit.split);
+                            if (divField != null) {
+                                int divI = (int)divField.GetValue(bpSplit.split);
+                                var trailsField = AccessTools.Field(typeof(Split), "dividerTrails");
+                                var trails = trailsField.GetValue(bpSplit.split) as List<Trail>;
+                                if (trails != null && divI >= 0 && divI < trails.Count) {
+                                    Trail activeTrail = trails[divI];
+                                    Split targetSplit = (activeTrail.splitStart == bpSplit.split) ? activeTrail.splitEnd : activeTrail.splitStart;
+                                    
+                                    // Cross-reference index
+                                    for(int j = 0; j < curBlueprint.splits.Count; j++) {
+                                        if (curBlueprint.splits[j].split == targetSplit) {
+                                            targetSchemaIdx = j; break;
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        BlueprintState.dividerIbySplitIndex[i] = divI;
-                        payload += divI + ",";
+                        BlueprintState.schemaTargetByIndex[i] = targetSchemaIdx;
+                        payload += targetSchemaIdx + ",";
                     }
                     curBlueprint.description += payload + "]";
                 }
@@ -166,33 +181,44 @@ namespace ColonySpireMod
                 if (dividerIField == null) return;
 
                 // Decode payload
-                List<int> decodedDivs = new List<int>();
-                if (curBlueprint.description != null && curBlueprint.description.Contains("||DIV[")) {
-                    int start = curBlueprint.description.IndexOf("||DIV[") + 6;
+                List<int> decodedTgts = new List<int>();
+                if (curBlueprint.description != null && curBlueprint.description.Contains("||TGT[")) {
+                    int start = curBlueprint.description.IndexOf("||TGT[") + 6;
                     int end = curBlueprint.description.IndexOf("]", start);
                     if (end > start) {
                         string raw = curBlueprint.description.Substring(start, end - start);
                         foreach(var r in raw.Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries)) {
-                            if (int.TryParse(r, out int v)) decodedDivs.Add(v);
+                            if (int.TryParse(r, out int v)) decodedTgts.Add(v);
                         }
                     }
                 }
 
                 for (int i = 0; i < curBlueprint.splits.Count; i++) {
-                    int targetI = 0;
-                    if (BlueprintState.dividerIbySplitIndex.TryGetValue(i, out int memI)) targetI = memI;
-                    if (i < decodedDivs.Count) targetI = decodedDivs[i];
+                    int targetSchemaIdx = -1;
+                    if (BlueprintState.schemaTargetByIndex.TryGetValue(i, out int memI)) targetSchemaIdx = memI;
+                    if (i < decodedTgts.Count) targetSchemaIdx = decodedTgts[i];
 
                     var spawnedSplit = curBlueprint.splits[i].split;
-                    if (spawnedSplit != null) {
-                        var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
-                        if (trails != null && trails.Count > 0) {
-                            targetI = Math.Max(0, Math.Min(targetI, trails.Count - 1));
-                        } else targetI = 0;
+                    if (spawnedSplit != null && targetSchemaIdx >= 0 && targetSchemaIdx < curBlueprint.splits.Count) {
+                        var targetBpSplit = curBlueprint.splits[targetSchemaIdx];
+                        if (targetBpSplit != null && targetBpSplit.split != null) {
+                            Split targetSpawned = targetBpSplit.split;
 
-                        dividerIField.SetValue(spawnedSplit, targetI);
-                        var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
-                        if (pointerUpdate != null) pointerUpdate.Invoke(spawnedSplit, new object[] { false });
+                            var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
+                            if (trails != null) {
+                                int resolvedI = 0;
+                                for (int tIdx = 0; tIdx < trails.Count; tIdx++) {
+                                    if (trails[tIdx] != null && (trails[tIdx].splitStart == targetSpawned || trails[tIdx].splitEnd == targetSpawned)) {
+                                        resolvedI = tIdx; 
+                                        break;
+                                    }
+                                }
+
+                                dividerIField.SetValue(spawnedSplit, resolvedI);
+                                var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
+                                if (pointerUpdate != null) pointerUpdate.Invoke(spawnedSplit, new object[] { false });
+                            }
+                        }
                     }
                 }
             } catch (Exception ex) {
@@ -210,31 +236,22 @@ namespace ColonySpireMod
                 var dividerTrails = dividerTrailsField?.GetValue(__instance) as List<Trail>;
                 if (dividerTrails == null || dividerTrails.Count <= 1) return;
 
-                // Lowest linkId is an impeccable reference direction for copy/paste topological mapping.
-                Trail refTrail = dividerTrails[0];
-                foreach (var t in dividerTrails) {
-                    if (t.linkId != 0 && (refTrail.linkId == 0 || t.linkId < refTrail.linkId)) refTrail = t;
-                }
-
                 Vector3 getDir(Trail t) {
                     Vector3 pS = t.splitStart != null ? t.splitStart.transform.position : t.transform.position;
                     Vector3 pE = t.splitEnd != null ? t.splitEnd.transform.position : t.transform.position + t.transform.forward;
                     return (pE - pS).normalized;
                 }
 
-                Vector3 refDir = getDir(refTrail);
-                refDir.y = 0f;
-
-                float GetLocalClock(Vector3 dir) {
+                float GetAbsoluteClock(Vector3 dir) {
                     dir.y = 0f;
-                    float angle = Vector3.Angle(refDir, dir);
-                    if (Vector3.Cross(refDir, dir).y < 0f) angle = 360f - angle; 
+                    float angle = Vector3.Angle(Vector3.forward, dir);
+                    if (Vector3.Cross(Vector3.forward, dir).y < 0f) angle = 360f - angle; 
                     return angle;
                 }
 
                 dividerTrails.Sort((Trail a, Trail b) => {
-                    float angleA = GetLocalClock(getDir(a));
-                    float angleB = GetLocalClock(getDir(b));
+                    float angleA = GetAbsoluteClock(getDir(a));
+                    float angleB = GetAbsoluteClock(getDir(b));
                     if (Mathf.Abs(angleA - angleB) > 0.001f) return angleA.CompareTo(angleB);
                     
                     float lenA = Vector3.Distance(a.splitStart != null ? a.splitStart.transform.position : a.transform.position, a.splitEnd != null ? a.splitEnd.transform.position : a.transform.position + a.transform.forward);
