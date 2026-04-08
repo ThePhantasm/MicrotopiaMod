@@ -319,7 +319,8 @@ namespace ColonySpireMod
                 var allSplits = AccessTools.Field(typeof(GameManager), "allSplits").GetValue(__instance) as HashSet<Split>;
                 if (allSplits != null) {
                     foreach(var s in allSplits) {
-                        if (s.dividerTrails != null && s.dividerTrails.Count > 1) {
+                        var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(s) as List<Trail>;
+                        if (trails != null && trails.Count > 1) {
                             var mUpdate = AccessTools.Method(typeof(Split), "UpdateDividerTrails");
                             mUpdate?.Invoke(s, new object[]{});
                         }
