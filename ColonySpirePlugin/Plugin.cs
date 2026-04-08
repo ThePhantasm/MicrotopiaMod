@@ -463,6 +463,23 @@ namespace ColonySpireMod
             PlayerPrefs.SetInt(KEY_EXCAV_CORES,  ModState.excavationCores);
             if (queenTier >= 1) PlayerPrefs.SetInt(KEY_QUEENTIER, queenTier);
             PlayerPrefs.Save();
+            
+            // Save lane tracker!
+            try {
+                if (System.IO.File.Exists(Files.GameSave(UIWorldList.lastLoadedSave, false))) {
+                    string path = DividerLaneTracker.GetSidecarPath(UIWorldList.lastLoadedSave);
+                    List<string> lines = new List<string> { "N:" + DividerLaneTracker.NextLaneId };
+                    foreach(var mgr in GameManager.instance.trails) {
+                        long lid = DividerLaneTracker.GetOrMintLaneId(mgr);
+                        if (lid > 0) {
+                            Vector3 pos = mgr.transform.position;
+                            lines.Add($"T,{pos.x},{pos.y},{pos.z},{lid}");
+                        }
+                    }
+                    System.IO.File.WriteAllLines(path, lines);
+                }
+            } catch (Exception ex) { Debug.LogError($"[Spire/Lane Tracker] Save Error: {ex.Message}"); }
+
             Debug.Log($"[Spire] Saved — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Q{ModState.royalMandateLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores}");
         }
 
@@ -489,7 +506,14 @@ namespace ColonySpireMod
             ModState.enableTechTreeColors= PlayerPrefs.GetInt(KEY_FEAT_TECHCOLORS, 1) != 0;
             ModState.enableGameSpeed     = PlayerPrefs.GetInt(KEY_FEAT_GAMESPEED, 1) != 0;
             ModState.enableColonySpire   = PlayerPrefs.GetInt(KEY_FEAT_MASTER,   1) != 0;
+            
+            DividerLaneTracker.pendingTrailLoads.Clear();
+            if (!string.IsNullOrEmpty(UIWorldList.lastLoadedSave)) {
+                DividerLaneTracker.LoadSidecar(UIWorldList.lastLoadedSave);
+            }
+
             Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores} Scale={ModState.islandScale}");
+
             Debug.Log($"[Spire] Features: Prestige={ModState.enablePrestige} Combat={ModState.enableCombat} Trails={ModState.enableColoredTrails} Battery={ModState.enableBatteryGates}");
         }
 

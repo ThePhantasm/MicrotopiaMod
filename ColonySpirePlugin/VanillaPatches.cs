@@ -116,10 +116,60 @@ namespace ColonySpireMod
     }
 
     // ================================================================
-    // FLAAAWLESS DIVIDER FIX: Absolute Compass Sort + Topological Schema Encoder
+    // FLAAAWLESS DIVIDER FIX: Custom Lane ID Sidecar Implementation
     // ================================================================
-    public static class BlueprintState {
-        public static Dictionary<int, int> schemaTargetByIndex = new Dictionary<int, int>();
+    public static class DividerLaneTracker {
+        public static System.Runtime.CompilerServices.ConditionalWeakTable<Trail, StrongBox<long>> trailLaneIds = new();
+        public static System.Runtime.CompilerServices.ConditionalWeakTable<Split, StrongBox<long>> splitTargetLaneIds = new();
+        public static long NextLaneId = 1;
+
+        public static long GetOrMintLaneId(Trail t) {
+            if (t == null) return 0;
+            if (trailLaneIds.TryGetValue(t, out var box) && box.Value != 0) return box.Value;
+            long id = NextLaneId++;
+            trailLaneIds.Add(t, new StrongBox<long>(id));
+            return id;
+        }
+
+        public static void SetSplitTargetLane(Split s, long targetLane) {
+            if (s == null) return;
+            if (splitTargetLaneIds.TryGetValue(s, out var box)) box.Value = targetLane;
+            else splitTargetLaneIds.Add(s, new StrongBox<long>(targetLane));
+        }
+
+        public static long GetSplitTargetLane(Split s) {
+            if (s != null && splitTargetLaneIds.TryGetValue(s, out var box)) return box.Value;
+            return 0;
+        }
+
+        public static string GetSidecarPath(string saveName) {
+            var saveDir = System.IO.Path.GetDirectoryName(Files.GameSave(saveName, false));
+            return System.IO.Path.Combine(saveDir, saveName + ".dividers");
+        }
+        
+        public static void LoadSidecar(string saveName) {
+            try {
+                string path = GetSidecarPath(saveName);
+                if (System.IO.File.Exists(path)) {
+                    var lines = System.IO.File.ReadAllLines(path);
+                    foreach(var line in lines) {
+                        if (line.StartsWith("N:")) { NextLaneId = long.Parse(line.Substring(2)); continue; }
+                        var parts = line.Split(',');
+                        if (parts.Length < 3) continue;
+                        Vector3 pos = new Vector3(float.Parse(parts[1]), float.Parse(parts[2]), float.Parse(parts[3]));
+                        long id = long.Parse(parts[4]);
+                        
+                        // We use position as an anchor to restore IDs!
+                        // This hook allows us to attach metadata post-load.
+                        pendingTrailLoads.Add(new PendingTrail { pos = pos, id = id });
+                    }
+                    Debug.Log($"[Spire] Loaded raw divider sidecar metadata.");
+                }
+            } catch (Exception ex) { Debug.LogError($"[Spire] Divider Sidecar Load error: {ex.Message}"); }
+        }
+
+        public struct PendingTrail { public Vector3 pos; public long id; }
+        public static List<PendingTrail> pendingTrailLoads = new List<PendingTrail>();
     }
 
     [HarmonyPatch(typeof(BuildingEditing), "CreateBlueprint")]
@@ -129,32 +179,12 @@ namespace ColonySpireMod
             try {
                 var curBlueprint = AccessTools.Field(typeof(BuildingEditing), "curBlueprint")?.GetValue(__instance) as Blueprint;
                 if (curBlueprint != null && curBlueprint.splits != null) {
-                    BlueprintState.schemaTargetByIndex.Clear();
-                    string payload = "||TGT[";
+                    string payload = "||LID[";
                     for (int i = 0; i < curBlueprint.splits.Count; i++) {
                         var bpSplit = curBlueprint.splits[i];
-                        int targetSchemaIdx = -1;
-                        if (bpSplit.split != null) {
-                            var divField = AccessTools.Field(typeof(Split), "dividerI");
-                            if (divField != null) {
-                                int divI = (int)divField.GetValue(bpSplit.split);
-                                var trailsField = AccessTools.Field(typeof(Split), "dividerTrails");
-                                var trails = trailsField.GetValue(bpSplit.split) as List<Trail>;
-                                if (trails != null && divI >= 0 && divI < trails.Count) {
-                                    Trail activeTrail = trails[divI];
-                                    Split targetSplit = (activeTrail.splitStart == bpSplit.split) ? activeTrail.splitEnd : activeTrail.splitStart;
-                                    
-                                    // Cross-reference index
-                                    for(int j = 0; j < curBlueprint.splits.Count; j++) {
-                                        if (curBlueprint.splits[j].split == targetSplit) {
-                                            targetSchemaIdx = j; break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        BlueprintState.schemaTargetByIndex[i] = targetSchemaIdx;
-                        payload += targetSchemaIdx + ",";
+                        long targetId = 0;
+                        if (bpSplit.split != null) targetId = DividerLaneTracker.GetSplitTargetLane(bpSplit.split);
+                        payload += targetId + ",";
                     }
                     curBlueprint.description += payload + "]";
                 }
@@ -167,63 +197,48 @@ namespace ColonySpireMod
         [HarmonyPostfix]
         static void Postfix(BuildingEditing __instance) {
             try {
-                var buildModeField = AccessTools.Field(typeof(BuildingEditing), "buildMode");
-                var builderBlueprintField = AccessTools.Field(typeof(BuildingEditing), "curBlueprint");
-                if (buildModeField == null || builderBlueprintField == null) return;
-                
-                var buildMode = (BuildMode)buildModeField.GetValue(__instance);
-                if (buildMode != BuildMode.PlaceBlueprint) return;
-                
-                var curBlueprint = builderBlueprintField.GetValue(__instance) as Blueprint;
+                var curBlueprintField = AccessTools.Field(typeof(BuildingEditing), "curBlueprint");
+                var curBlueprint = curBlueprintField?.GetValue(__instance) as Blueprint;
                 if (curBlueprint == null || curBlueprint.splits == null) return;
                 
-                var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
-                if (dividerIField == null) return;
+                var buildModeField = AccessTools.Field(typeof(BuildingEditing), "buildMode");
+                var buildMode = (BuildMode)buildModeField.GetValue(__instance);
+                if (buildMode != BuildMode.PlaceBlueprint) return;
 
-                // Decode payload
-                List<int> decodedTgts = new List<int>();
-                if (curBlueprint.description != null && curBlueprint.description.Contains("||TGT[")) {
-                    int start = curBlueprint.description.IndexOf("||TGT[") + 6;
+                List<long> decodedIds = new List<long>();
+                if (curBlueprint.description != null && curBlueprint.description.Contains("||LID[")) {
+                    int start = curBlueprint.description.IndexOf("||LID[") + 6;
                     int end = curBlueprint.description.IndexOf("]", start);
                     if (end > start) {
                         string raw = curBlueprint.description.Substring(start, end - start);
                         foreach(var r in raw.Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries)) {
-                            if (int.TryParse(r, out int v)) decodedTgts.Add(v);
+                            if (long.TryParse(r, out long v)) decodedIds.Add(v);
                         }
                     }
                 }
 
                 for (int i = 0; i < curBlueprint.splits.Count; i++) {
-                    int targetSchemaIdx = -1;
-                    if (BlueprintState.schemaTargetByIndex.TryGetValue(i, out int memI)) targetSchemaIdx = memI;
-                    if (i < decodedTgts.Count) targetSchemaIdx = decodedTgts[i];
-
                     var spawnedSplit = curBlueprint.splits[i].split;
-                    if (spawnedSplit != null && targetSchemaIdx >= 0 && targetSchemaIdx < curBlueprint.splits.Count) {
-                        var targetBpSplit = curBlueprint.splits[targetSchemaIdx];
-                        if (targetBpSplit != null && targetBpSplit.split != null) {
-                            Split targetSpawned = targetBpSplit.split;
-
+                    if (spawnedSplit != null && i < decodedIds.Count) {
+                        long targetId = decodedIds[i];
+                        if (targetId != 0) {
+                            DividerLaneTracker.SetSplitTargetLane(spawnedSplit, targetId);
+                            // Also natively update the index so it matches visually immediately
                             var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
                             if (trails != null) {
-                                int resolvedI = 0;
-                                for (int tIdx = 0; tIdx < trails.Count; tIdx++) {
-                                    if (trails[tIdx] != null && (trails[tIdx].splitStart == targetSpawned || trails[tIdx].splitEnd == targetSpawned)) {
-                                        resolvedI = tIdx; 
+                                for(int t=0; t<trails.Count; t++) {
+                                    if (DividerLaneTracker.GetOrMintLaneId(trails[t]) == targetId) {
+                                        AccessTools.Field(typeof(Split), "dividerI").SetValue(spawnedSplit, t);
                                         break;
                                     }
                                 }
-
-                                dividerIField.SetValue(spawnedSplit, resolvedI);
-                                var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
-                                if (pointerUpdate != null) pointerUpdate.Invoke(spawnedSplit, new object[] { false });
                             }
+                            var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
+                            pointerUpdate?.Invoke(spawnedSplit, new object[] { false });
                         }
                     }
                 }
-            } catch (Exception ex) {
-                Debug.LogError($"[Spire/BlueprintState] PlaceBuildings fix failed: {ex.Message}");
-            }
+            } catch (Exception ex) { Debug.LogError($"[Spire/BlueprintState] PlaceBuildings fix failed: {ex.Message}"); }
         }
     }
 
@@ -232,35 +247,79 @@ namespace ColonySpireMod
         [HarmonyPostfix]
         static void Postfix(Split __instance) {
             try {
-                var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
-                var dividerTrails = dividerTrailsField?.GetValue(__instance) as List<Trail>;
-                if (dividerTrails == null || dividerTrails.Count <= 1) return;
-
-                Vector3 getDir(Trail t) {
-                    Vector3 pS = t.splitStart != null ? t.splitStart.transform.position : t.transform.position;
-                    Vector3 pE = t.splitEnd != null ? t.splitEnd.transform.position : t.transform.position + t.transform.forward;
-                    return (pE - pS).normalized;
+                // When trails update, if we have a hard-assigned Lane Target, we force the divider index to match it!
+                // This nullifies hash set scrambling!
+                long targetLane = DividerLaneTracker.GetSplitTargetLane(__instance);
+                if (targetLane != 0) {
+                    var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(__instance) as List<Trail>;
+                    if (trails != null) {
+                        for(int t = 0; t < trails.Count; t++) {
+                            if (DividerLaneTracker.GetOrMintLaneId(trails[t]) == targetLane) {
+                                AccessTools.Field(typeof(Split), "dividerI").SetValue(__instance, t);
+                                return;
+                            }
+                        }
+                    }
                 }
+            } catch { }
+        }
+    }
 
-                float GetAbsoluteClock(Vector3 dir) {
-                    dir.y = 0f;
-                    float angle = Vector3.Angle(Vector3.forward, dir);
-                    if (Vector3.Cross(Vector3.forward, dir).y < 0f) angle = 360f - angle; 
-                    return angle;
+    [HarmonyPatch(typeof(Split), "UpdatePointer")]
+    public static class SplitUpdatePointerHookPatch {
+        [HarmonyPostfix]
+        static void Postfix(Split __instance) {
+            var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(__instance) as List<Trail>;
+            var divIField = AccessTools.Field(typeof(Split), "dividerI");
+            if (trails != null && divIField != null) {
+                int divI = (int)divIField.GetValue(__instance);
+                if (divI >= 0 && divI < trails.Count) {
+                    DividerLaneTracker.SetSplitTargetLane(__instance, DividerLaneTracker.GetOrMintLaneId(trails[divI]));
                 }
-
-                dividerTrails.Sort((Trail a, Trail b) => {
-                    float angleA = GetAbsoluteClock(getDir(a));
-                    float angleB = GetAbsoluteClock(getDir(b));
-                    if (Mathf.Abs(angleA - angleB) > 0.001f) return angleA.CompareTo(angleB);
-                    
-                    float lenA = Vector3.Distance(a.splitStart != null ? a.splitStart.transform.position : a.transform.position, a.splitEnd != null ? a.splitEnd.transform.position : a.transform.position + a.transform.forward);
-                    float lenB = Vector3.Distance(b.splitStart != null ? b.splitStart.transform.position : b.transform.position, b.splitEnd != null ? b.splitEnd.transform.position : b.transform.position + b.transform.forward);
-                    return lenA.CompareTo(lenB);
-                });
-            } catch (Exception ex) {
-                Debug.LogError($"[Spire/DividerFix] Sort fix failed: {ex.Message}");
             }
+        }
+    }
+
+    [HarmonyPatch(typeof(Split), "Choose")]
+    public static class SplitChooseHookPatch {
+        [HarmonyPostfix]
+        static void Postfix(Split __instance) {
+            var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(__instance) as List<Trail>;
+            int divI = (int)AccessTools.Field(typeof(Split), "dividerI").GetValue(__instance);
+            if (trails != null && divI >= 0 && divI < trails.Count) {
+                DividerLaneTracker.SetSplitTargetLane(__instance, DividerLaneTracker.GetOrMintLaneId(trails[divI]));
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(GameManager), "LoadGame")]
+    public static class DividerLoadApplierPatch {
+        [HarmonyPostfix]
+        static void Postfix(GameManager __instance) {
+            try {
+                if (DividerLaneTracker.pendingTrailLoads.Count > 0) {
+                    foreach(var t in __instance.trails) {
+                        for(int i = 0; i < DividerLaneTracker.pendingTrailLoads.Count; i++) {
+                            if (Vector3.Distance(t.transform.position, DividerLaneTracker.pendingTrailLoads[i].pos) < 0.1f) {
+                                if (!DividerLaneTracker.trailLaneIds.TryGetValue(t, out _)) {
+                                    DividerLaneTracker.trailLaneIds.Add(t, new StrongBox<long>(DividerLaneTracker.pendingTrailLoads[i].id));
+                                }
+                                DividerLaneTracker.pendingTrailLoads.RemoveAt(i);
+                                break;
+                            }
+                        }
+                    }
+                    DividerLaneTracker.pendingTrailLoads.Clear();
+                }
+
+                // Push initial state to dividers!
+                foreach(var s in __instance.splits) {
+                    if (s.dividerTrails != null && s.dividerTrails.Count > 1) {
+                        var mUpdate = AccessTools.Method(typeof(Split), "UpdateDividerTrails");
+                        mUpdate?.Invoke(s, new object[]{});
+                    }
+                }
+            } catch (Exception ex) { Debug.LogError($"[Spire/Lane] Post-load map bind failed: {ex.Message}"); }
         }
     }
 
