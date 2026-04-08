@@ -463,26 +463,6 @@ namespace ColonySpireMod
             PlayerPrefs.SetInt(KEY_EXCAV_CORES,  ModState.excavationCores);
             if (queenTier >= 1) PlayerPrefs.SetInt(KEY_QUEENTIER, queenTier);
             PlayerPrefs.Save();
-            
-            // Save lane tracker!
-            try {
-                if (System.IO.File.Exists(Files.GameSave(GlobalGameState.saveFile, false))) {
-                    string path = DividerLaneTracker.GetSidecarPath(GlobalGameState.saveFile);
-                    List<string> lines = new List<string> { "N:" + DividerLaneTracker.NextLaneId };
-                    var allTrails = AccessTools.Field(typeof(GameManager), "allTrails").GetValue(GameManager.instance) as HashSet<Trail>;
-                    if (allTrails != null) {
-                        foreach(var mgr in allTrails) {
-                            long lid = DividerLaneTracker.GetOrMintLaneId(mgr);
-                            if (lid > 0) {
-                                Vector3 pos = mgr.transform.position;
-                                lines.Add($"T,{pos.x},{pos.y},{pos.z},{lid}");
-                            }
-                        }
-                    }
-                    System.IO.File.WriteAllLines(path, lines);
-                }
-            } catch (Exception ex) { Debug.LogError($"[Spire/Lane Tracker] Save Error: {ex.Message}"); }
-
             Debug.Log($"[Spire] Saved — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Q{ModState.royalMandateLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores}");
         }
 
@@ -508,13 +488,7 @@ namespace ColonySpireMod
             ModState.enableGameSpeed     = PlayerPrefs.GetInt(KEY_FEAT_GAMESPEED, 1) != 0;
             ModState.enableColonySpire   = PlayerPrefs.GetInt(KEY_FEAT_MASTER,   1) != 0;
             
-            DividerLaneTracker.pendingTrailLoads.Clear();
-            if (!string.IsNullOrEmpty(GlobalGameState.saveFile)) {
-                DividerLaneTracker.LoadSidecar(GlobalGameState.saveFile);
-            }
-
             Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores} Scale={ModState.islandScale}");
-
             Debug.Log($"[Spire] Features: Prestige={ModState.enablePrestige} Combat={ModState.enableCombat} Trails={ModState.enableColoredTrails} Battery={ModState.enableBatteryGates}");
         }
 
