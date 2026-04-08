@@ -116,28 +116,32 @@ namespace ColonySpireMod
     }
 
     // ================================================================
-    // FLAAAWLESS DIVIDER FIX: Local-Rotation Invariant Sorting + Primative Array Tracking
+    // FLAAAWLESS DIVIDER FIX: Local-Rotation Sort + String Encoding
     // ================================================================
     public static class BlueprintState {
         public static Dictionary<int, int> dividerIbySplitIndex = new Dictionary<int, int>();
     }
 
-    [HarmonyPatch(typeof(Blueprint), MethodType.Constructor, new Type[] { typeof(Building), typeof(Vector3) })]
-    public static class BlueprintCtorPatch {
+    [HarmonyPatch(typeof(BuildingEditing), "CreateBlueprint")]
+    public static class BlueprintCreatePatch {
         [HarmonyPostfix]
-        static void Postfix() {
-            BlueprintState.dividerIbySplitIndex.Clear();
-        }
-    }
-
-    [HarmonyPatch(typeof(Blueprint), "AddSplit", new Type[] { typeof(Split) })]
-    public static class BlueprintAddSplitPatch {
-        [HarmonyPostfix]
-        static void Postfix(int __result, Split split) {
+        static void Postfix(BuildingEditing __instance) {
             try {
-                if (split != null) {
-                    var divField = AccessTools.Field(typeof(Split), "dividerI");
-                    if (divField != null) BlueprintState.dividerIbySplitIndex[__result] = (int)divField.GetValue(split);
+                var curBlueprint = AccessTools.Field(typeof(BuildingEditing), "curBlueprint").GetValue(__instance) as Blueprint;
+                if (curBlueprint != null && curBlueprint.splits != null) {
+                    BlueprintState.dividerIbySplitIndex.Clear();
+                    string payload = "||DIV[";
+                    for (int i = 0; i < curBlueprint.splits.Count; i++) {
+                        var bpSplit = curBlueprint.splits[i];
+                        int divI = 0;
+                        if (bpSplit.split != null) {
+                            var divField = AccessTools.Field(typeof(Split), "dividerI");
+                            if (divField != null) divI = (int)divField.GetValue(bpSplit.split);
+                        }
+                        BlueprintState.dividerIbySplitIndex[i] = divI;
+                        payload += divI + ",";
+                    }
+                    curBlueprint.description += payload + "]";
                 }
             } catch { }
         }
@@ -161,20 +165,34 @@ namespace ColonySpireMod
                 var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
                 if (dividerIField == null) return;
 
-                // Simple 1-to-1 array map! Works no matter how many times the blueprint objects are cloned in memory!
-                for (int i = 0; i < curBlueprint.splits.Count; i++) {
-                    if (BlueprintState.dividerIbySplitIndex.TryGetValue(i, out int targetI)) {
-                        var spawnedSplit = curBlueprint.splits[i].split;
-                        if (spawnedSplit != null) {
-                            var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
-                            if (trails != null && trails.Count > 0) {
-                                targetI = Math.Max(0, Math.Min(targetI, trails.Count - 1));
-                            } else targetI = 0;
-
-                            dividerIField.SetValue(spawnedSplit, targetI);
-                            var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
-                            if (pointerUpdate != null) pointerUpdate.Invoke(spawnedSplit, new object[] { false });
+                // Decode payload
+                List<int> decodedDivs = new List<int>();
+                if (curBlueprint.description != null && curBlueprint.description.Contains("||DIV[")) {
+                    int start = curBlueprint.description.IndexOf("||DIV[") + 6;
+                    int end = curBlueprint.description.IndexOf("]", start);
+                    if (end > start) {
+                        string raw = curBlueprint.description.Substring(start, end - start);
+                        foreach(var r in raw.Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries)) {
+                            if (int.TryParse(r, out int v)) decodedDivs.Add(v);
                         }
+                    }
+                }
+
+                for (int i = 0; i < curBlueprint.splits.Count; i++) {
+                    int targetI = 0;
+                    if (BlueprintState.dividerIbySplitIndex.TryGetValue(i, out int memI)) targetI = memI;
+                    if (i < decodedDivs.Count) targetI = decodedDivs[i];
+
+                    var spawnedSplit = curBlueprint.splits[i].split;
+                    if (spawnedSplit != null) {
+                        var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
+                        if (trails != null && trails.Count > 0) {
+                            targetI = Math.Max(0, Math.Min(targetI, trails.Count - 1));
+                        } else targetI = 0;
+
+                        dividerIField.SetValue(spawnedSplit, targetI);
+                        var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
+                        if (pointerUpdate != null) pointerUpdate.Invoke(spawnedSplit, new object[] { false });
                     }
                 }
             } catch (Exception ex) {
@@ -192,10 +210,7 @@ namespace ColonySpireMod
                 var dividerTrails = dividerTrailsField?.GetValue(__instance) as List<Trail>;
                 if (dividerTrails == null || dividerTrails.Count <= 1) return;
 
-                // Pick the trail with the LOWEST linkId as the local reference "Forward".
-                // Since pasted blueprints spawn trails sequentially, the lowest linkId trail 
-                // in the pasted hub perfectly matches the lowest linkId in the original hub!
-                // This means 'refDir' rotates LOCALLY with the blueprint natively!
+                // Lowest linkId is an impeccable reference direction for copy/paste topological mapping.
                 Trail refTrail = dividerTrails[0];
                 foreach (var t in dividerTrails) {
                     if (t.linkId != 0 && (refTrail.linkId == 0 || t.linkId < refTrail.linkId)) refTrail = t;
@@ -213,7 +228,7 @@ namespace ColonySpireMod
                 float GetLocalClock(Vector3 dir) {
                     dir.y = 0f;
                     float angle = Vector3.Angle(refDir, dir);
-                    if (Vector3.Cross(refDir, dir).y < 0f) angle = 360f - angle; // Right-handed check
+                    if (Vector3.Cross(refDir, dir).y < 0f) angle = 360f - angle; 
                     return angle;
                 }
 
