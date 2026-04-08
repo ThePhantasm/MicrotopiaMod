@@ -123,11 +123,14 @@ namespace ColonySpireMod
             if (ModState.enableDividerFix) {
                 Logger.LogInfo("[Improvement] Divider Save Fix: ENABLED");
                 patchClasses.AddRange(new[] {
-                    typeof(AbsoluteCompassSortPatch),
-                    typeof(BlueprintCreatePatch),
-                    typeof(BlueprintPlaceBuildingsPatch),
                     typeof(DividerLoadFixPatch),
                     typeof(DividerChooseSafetyPatch),
+                    typeof(AbsoluteCompassSortPatch),
+                    typeof(SplitUpdatePointerHookPatch),
+                    typeof(SplitChooseHookPatch),
+                    typeof(DividerLoadApplierPatch),
+                    typeof(BlueprintCreatePatch),
+                    typeof(BlueprintPlaceBuildingsPatch),
                     typeof(CounterGateLoadLeakFixPatch),
                 });
             } else {
@@ -200,6 +203,11 @@ namespace ColonySpireMod
     // ================================================================
     public static class ModState
     {
+        // ================================================================
+        public static Dictionary<Split, long> dividerTargetLanes = new Dictionary<Split, long>();
+        public static void SetDividerTargetLane(Split split, long laneId) { if (split != null) dividerTargetLanes[split] = laneId; }
+        public static long GetDividerTargetLane(Split split) { return split != null && dividerTargetLanes.TryGetValue(split, out long val) ? val : 0; }
+        // ================================================================
         public static int prestigeLevel = 0;
         public static int pheromoneLevel = 0;
         public static int royalMandateLevel = 0;
@@ -465,6 +473,25 @@ namespace ColonySpireMod
             PlayerPrefs.SetInt(KEY_EXCAV_CORES,  ModState.excavationCores);
             if (queenTier >= 1) PlayerPrefs.SetInt(KEY_QUEENTIER, queenTier);
             PlayerPrefs.Save();
+            // Save lane tracker!
+            try {
+                if (!string.IsNullOrEmpty(GlobalGameState.saveFile)) {
+                    string path = DividerLaneTracker.GetSidecarPath(GlobalGameState.saveFile);
+                    List<string> lines = new List<string> { "N:" + DividerLaneTracker.NextLaneId };
+                    var allTrails = AccessTools.Field(typeof(GameManager), "allTrails").GetValue(GameManager.instance) as HashSet<Trail>;
+                    if (allTrails != null) {
+                        foreach(var mgr in allTrails) {
+                            long lid = DividerLaneTracker.GetOrMintLaneId(mgr);
+                            if (lid > 0) {
+                                Vector3 pos = mgr.transform.position;
+                                lines.Add($"T,{pos.x},{pos.y},{pos.z},{lid}");
+                            }
+                        }
+                    }
+                    System.IO.File.WriteAllLines(path, lines);
+                }
+            } catch (Exception ex) { Debug.LogError($"[Spire/Lane Tracker] Save Error: {ex.Message}"); }
+            
             Debug.Log($"[Spire] Saved — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Q{ModState.royalMandateLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores}");
         }
 
