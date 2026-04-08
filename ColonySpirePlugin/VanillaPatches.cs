@@ -298,7 +298,7 @@ namespace ColonySpireMod
         static void Postfix(GameManager __instance) {
             try {
                 if (DividerLaneTracker.pendingTrailLoads.Count > 0) {
-                    foreach(var t in __instance.trails) {
+                    foreach(var t in __instance.ETrails()) {
                         for(int i = 0; i < DividerLaneTracker.pendingTrailLoads.Count; i++) {
                             if (Vector3.Distance(t.transform.position, DividerLaneTracker.pendingTrailLoads[i].pos) < 0.1f) {
                                 if (!DividerLaneTracker.trailLaneIds.TryGetValue(t, out _)) {
@@ -313,7 +313,7 @@ namespace ColonySpireMod
                 }
 
                 // Push initial state to dividers!
-                foreach(var s in __instance.splits) {
+                foreach(var s in __instance.ESplits()) {
                     if (s.dividerTrails != null && s.dividerTrails.Count > 1) {
                         var mUpdate = AccessTools.Method(typeof(Split), "UpdateDividerTrails");
                         mUpdate?.Invoke(s, new object[]{});

@@ -466,10 +466,10 @@ namespace ColonySpireMod
             
             // Save lane tracker!
             try {
-                if (System.IO.File.Exists(Files.GameSave(UIWorldList.lastLoadedSave, false))) {
-                    string path = DividerLaneTracker.GetSidecarPath(UIWorldList.lastLoadedSave);
+                if (System.IO.File.Exists(Files.GameSave(GlobalGameState.saveFile, false))) {
+                    string path = DividerLaneTracker.GetSidecarPath(GlobalGameState.saveFile);
                     List<string> lines = new List<string> { "N:" + DividerLaneTracker.NextLaneId };
-                    foreach(var mgr in GameManager.instance.trails) {
+                    foreach(var mgr in GameManager.instance.ETrails()) {
                         long lid = DividerLaneTracker.GetOrMintLaneId(mgr);
                         if (lid > 0) {
                             Vector3 pos = mgr.transform.position;
@@ -483,33 +483,31 @@ namespace ColonySpireMod
             Debug.Log($"[Spire] Saved — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Q{ModState.royalMandateLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores}");
         }
 
-        public static void Load() {
-            ModState.prestigeLevel     = PlayerPrefs.GetInt(KEY_PRESTIGE, 0);
-            ModState.pheromoneLevel    = PlayerPrefs.GetInt(KEY_SPEED,    0);
-            ModState.royalMandateLevel = PlayerPrefs.GetInt(KEY_QUEEN,    0);
-            ModState.miningLevel       = PlayerPrefs.GetInt(KEY_MINE,     0);
-            ModState.carapaceLevel     = PlayerPrefs.GetInt(KEY_MOLD,     0);
-            ModState.wingLevel         = PlayerPrefs.GetInt(KEY_WINGS,    0);
-            ModState.sentinelHatched   = PlayerPrefs.GetInt(KEY_SENTINEL, 0);
-            ModState.energyLevel       = PlayerPrefs.GetInt(KEY_ENERGY,   0);
-            ModState.gathererLevel     = PlayerPrefs.GetInt(KEY_GATHER,   0);
-            ModState.prestigePoints    = PlayerPrefs.GetInt(KEY_PRESTIGE_PTS, 0);
-            ModState.excavationCores   = PlayerPrefs.GetInt(KEY_EXCAV_CORES,  0);
-            ModState.islandScale       = PlayerPrefs.GetFloat(KEY_ISLAND_SCALE, 1.0f);
-            ModState.mainBusColorIndex = PlayerPrefs.GetInt(KEY_MAINBUS_COLOR, 0);
+        public static void Load(int queenTierScale = 1) {
+            ModState.prestigeLevel       = PlayerPrefs.GetInt(KEY_PRESTIGE, 1);
+            ModState.pheromoneLevel      = PlayerPrefs.GetInt(KEY_SPEED, 1);
+            ModState.royalMandateLevel   = PlayerPrefs.GetInt(KEY_QUEEN, 1);
+            ModState.miningLevel         = PlayerPrefs.GetInt(KEY_MINE, 0);
+            ModState.carapaceLevel       = PlayerPrefs.GetInt(KEY_MOLD, 0);
+            ModState.wingLevel           = PlayerPrefs.GetInt(KEY_WINGS, 0);
+            ModState.sentinelHatched     = PlayerPrefs.GetInt(KEY_SENTINEL, 0);
+            ModState.energyLevel         = PlayerPrefs.GetInt(KEY_ENERGY, 0);
+            ModState.gathererLevel       = PlayerPrefs.GetInt(KEY_GATHER, 0);
+            ModState.excavationCores     = PlayerPrefs.GetInt(KEY_EXCAV_CORES, 0);
+            ModState.prestigePoints      = PlayerPrefs.GetInt(KEY_PRESTIGE_PTS, 0);
+            ModState.islandScale         = queenTierScale;
+
             ModState.enablePrestige      = PlayerPrefs.GetInt(KEY_FEAT_PRESTIGE, 1) != 0;
-            ModState.enableCombat        = PlayerPrefs.GetInt(KEY_FEAT_COMBAT,   1) != 0;
-            ModState.enableColoredTrails = PlayerPrefs.GetInt(KEY_FEAT_TRAILS,   1) != 0;
+            ModState.enableCombat        = PlayerPrefs.GetInt(KEY_FEAT_COMBAT, 1) != 0;
             ModState.enableBatteryGates  = PlayerPrefs.GetInt(KEY_FEAT_BATTERY,  1) != 0;
-            ModState.enableDividerFix    = PlayerPrefs.GetInt(KEY_FEAT_DIVIDER,  1) != 0;
-            ModState.enableBridgeFix     = PlayerPrefs.GetInt(KEY_FEAT_BRIDGE,   1) != 0;
+            ModState.enableColoredTrails = PlayerPrefs.GetInt(KEY_FEAT_TRAILS,   1) != 0;
             ModState.enableTechTreeColors= PlayerPrefs.GetInt(KEY_FEAT_TECHCOLORS, 1) != 0;
             ModState.enableGameSpeed     = PlayerPrefs.GetInt(KEY_FEAT_GAMESPEED, 1) != 0;
             ModState.enableColonySpire   = PlayerPrefs.GetInt(KEY_FEAT_MASTER,   1) != 0;
             
             DividerLaneTracker.pendingTrailLoads.Clear();
-            if (!string.IsNullOrEmpty(UIWorldList.lastLoadedSave)) {
-                DividerLaneTracker.LoadSidecar(UIWorldList.lastLoadedSave);
+            if (!string.IsNullOrEmpty(GlobalGameState.saveFile)) {
+                DividerLaneTracker.LoadSidecar(GlobalGameState.saveFile);
             }
 
             Debug.Log($"[Spire] Loaded — P{ModState.prestigeLevel} Spd{ModState.pheromoneLevel} Sentinel×{ModState.sentinelHatched} E{ModState.energyLevel} G{ModState.gathererLevel} PP={ModState.prestigePoints} Cores={ModState.excavationCores} Scale={ModState.islandScale}");
