@@ -469,11 +469,14 @@ namespace ColonySpireMod
                 if (System.IO.File.Exists(Files.GameSave(GlobalGameState.saveFile, false))) {
                     string path = DividerLaneTracker.GetSidecarPath(GlobalGameState.saveFile);
                     List<string> lines = new List<string> { "N:" + DividerLaneTracker.NextLaneId };
-                    foreach(var mgr in GameManager.instance.ETrails()) {
-                        long lid = DividerLaneTracker.GetOrMintLaneId(mgr);
-                        if (lid > 0) {
-                            Vector3 pos = mgr.transform.position;
-                            lines.Add($"T,{pos.x},{pos.y},{pos.z},{lid}");
+                    var allTrails = AccessTools.Field(typeof(GameManager), "allTrails").GetValue(GameManager.instance) as HashSet<Trail>;
+                    if (allTrails != null) {
+                        foreach(var mgr in allTrails) {
+                            long lid = DividerLaneTracker.GetOrMintLaneId(mgr);
+                            if (lid > 0) {
+                                Vector3 pos = mgr.transform.position;
+                                lines.Add($"T,{pos.x},{pos.y},{pos.z},{lid}");
+                            }
                         }
                     }
                     System.IO.File.WriteAllLines(path, lines);

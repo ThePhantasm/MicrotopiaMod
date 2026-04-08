@@ -298,14 +298,17 @@ namespace ColonySpireMod
         static void Postfix(GameManager __instance) {
             try {
                 if (DividerLaneTracker.pendingTrailLoads.Count > 0) {
-                    foreach(var t in __instance.ETrails()) {
-                        for(int i = 0; i < DividerLaneTracker.pendingTrailLoads.Count; i++) {
-                            if (Vector3.Distance(t.transform.position, DividerLaneTracker.pendingTrailLoads[i].pos) < 0.1f) {
-                                if (!DividerLaneTracker.trailLaneIds.TryGetValue(t, out _)) {
-                                    DividerLaneTracker.trailLaneIds.Add(t, new StrongBox<long>(DividerLaneTracker.pendingTrailLoads[i].id));
+                    var allTrails = AccessTools.Field(typeof(GameManager), "allTrails").GetValue(__instance) as HashSet<Trail>;
+                    if (allTrails != null) {
+                        foreach(var t in allTrails) {
+                            for(int i = 0; i < DividerLaneTracker.pendingTrailLoads.Count; i++) {
+                                if (Vector3.Distance(t.transform.position, DividerLaneTracker.pendingTrailLoads[i].pos) < 0.1f) {
+                                    if (!DividerLaneTracker.trailLaneIds.TryGetValue(t, out _)) {
+                                        DividerLaneTracker.trailLaneIds.Add(t, new StrongBox<long>(DividerLaneTracker.pendingTrailLoads[i].id));
+                                    }
+                                    DividerLaneTracker.pendingTrailLoads.RemoveAt(i);
+                                    break;
                                 }
-                                DividerLaneTracker.pendingTrailLoads.RemoveAt(i);
-                                break;
                             }
                         }
                     }
@@ -313,10 +316,13 @@ namespace ColonySpireMod
                 }
 
                 // Push initial state to dividers!
-                foreach(var s in __instance.ESplits()) {
-                    if (s.dividerTrails != null && s.dividerTrails.Count > 1) {
-                        var mUpdate = AccessTools.Method(typeof(Split), "UpdateDividerTrails");
-                        mUpdate?.Invoke(s, new object[]{});
+                var allSplits = AccessTools.Field(typeof(GameManager), "allSplits").GetValue(__instance) as HashSet<Split>;
+                if (allSplits != null) {
+                    foreach(var s in allSplits) {
+                        if (s.dividerTrails != null && s.dividerTrails.Count > 1) {
+                            var mUpdate = AccessTools.Method(typeof(Split), "UpdateDividerTrails");
+                            mUpdate?.Invoke(s, new object[]{});
+                        }
                     }
                 }
             } catch (Exception ex) { Debug.LogError($"[Spire/Lane] Post-load map bind failed: {ex.Message}"); }
