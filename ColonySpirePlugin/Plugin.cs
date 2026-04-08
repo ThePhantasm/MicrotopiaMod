@@ -125,7 +125,6 @@ namespace ColonySpireMod
                 patchClasses.AddRange(new[] {
                     typeof(DividerLoadFixPatch),
                     typeof(DividerChooseSafetyPatch),
-                    typeof(AbsoluteCompassSortPatch),
                     typeof(SplitUpdatePointerHookPatch),
                     typeof(SplitChooseHookPatch),
                     typeof(DividerLoadApplierPatch),
