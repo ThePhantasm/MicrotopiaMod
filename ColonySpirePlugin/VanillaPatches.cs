@@ -73,11 +73,14 @@ namespace ColonySpireMod
                 if (connectedTrails == null) return true;
                 
                 List<Trail> newDividerTrails = new List<Trail>();
+                bool hasDivider = false;
                 foreach (Trail t in connectedTrails) {
-                    if (t.splitStart == __instance && t.moveDir == MoveDir.Forward) newDividerTrails.Add(t);
-                    else if (t.splitEnd == __instance && t.moveDir == MoveDir.Backward) newDividerTrails.Add(t);
-                    else if (t.splitStart == null) newDividerTrails.Add(t);
+                    if (t.splitStart == __instance) {
+                        newDividerTrails.Add(t);
+                        if (t.trailType == TrailType.DIVIDER) hasDivider = true;
+                    }
                 }
+                if (!hasDivider) newDividerTrails.Clear();
 
                 // Protect Native index, mapping it to Absolute Arrow!
                 Trail currentlyTargetedTrail = null;
@@ -87,18 +90,20 @@ namespace ColonySpireMod
                     currentlyTargetedTrail = oldTrailsList[oldDivI];
                 }
                 
-                newDividerTrails.Sort((a, b) => {
-                    Vector3 dA = (a.splitStart == __instance) ? (a.splitEnd != null ? a.splitEnd.transform.position : a.transform.position + a.transform.forward) : (a.splitStart != null ? a.splitStart.transform.position : a.transform.position - a.transform.forward);
-                    Vector3 dB = (b.splitStart == __instance) ? (b.splitEnd != null ? b.splitEnd.transform.position : b.transform.position + b.transform.forward) : (b.splitStart != null ? b.splitStart.transform.position : b.transform.position - b.transform.forward);
-                    Vector3 dirA = (dA - __instance.transform.position).normalized;
-                    Vector3 dirB = (dB - __instance.transform.position).normalized;
-                    dirA.y = 0; dirB.y = 0;
-                    float angleA = Vector3.Angle(Vector3.forward, dirA);
-                    if (Vector3.Cross(Vector3.forward, dirA).y < 0) angleA = 360f - angleA;
-                    float angleB = Vector3.Angle(Vector3.forward, dirB);
-                    if (Vector3.Cross(Vector3.forward, dirB).y < 0) angleB = 360f - angleB;
-                    return angleA.CompareTo(angleB);
-                });
+                if (newDividerTrails.Count > 0) {
+                    newDividerTrails.Sort((a, b) => {
+                        Vector3 dA = (a.splitEnd != null ? a.splitEnd.transform.position : a.transform.position + a.direction);
+                        Vector3 dB = (b.splitEnd != null ? b.splitEnd.transform.position : b.transform.position + b.direction);
+                        Vector3 dirA = (dA - __instance.transform.position).normalized;
+                        Vector3 dirB = (dB - __instance.transform.position).normalized;
+                        dirA.y = 0; dirB.y = 0;
+                        float angleA = Vector3.Angle(Vector3.forward, dirA);
+                        if (Vector3.Cross(Vector3.forward, dirA).y < 0) angleA = 360f - angleA;
+                        float angleB = Vector3.Angle(Vector3.forward, dirB);
+                        if (Vector3.Cross(Vector3.forward, dirB).y < 0) angleB = 360f - angleB;
+                        return angleA.CompareTo(angleB);
+                    });
+                }
                 
                 dividerTrailsField.SetValue(__instance, newDividerTrails);
                 
@@ -110,7 +115,16 @@ namespace ColonySpireMod
                         }
                     }
                 }
-            } catch { }
+
+                if (!during_load) {
+                    int cI = (int)dividerIField.GetValue(__instance);
+                    if (cI >= newDividerTrails.Count) dividerIField.SetValue(__instance, 0);
+                }
+                
+                var ptrUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
+                ptrUpdate?.Invoke(__instance, new object[] { during_load });
+                
+            } catch (Exception ex) { Debug.LogError($"[Spire/Sort] Abs Sort Error: {ex.Message}"); }
             return false; // Skip original
         }
     }
@@ -121,11 +135,14 @@ namespace ColonySpireMod
         static void Postfix(BuildingEditing __instance) {
             try {
                 var curBlueprint = AccessTools.Field(typeof(BuildingEditing), "curBlueprint")?.GetValue(__instance) as Blueprint;
-                if (curBlueprint != null && curBlueprint.splits != null && curBlueprint.trails != null) {
-                    string payload = "||BPI[";
+                if (curBlueprint != null && curBlueprint.splits != null) {
+                    var mainBld = AccessTools.Field(typeof(BuildingEditing), "mainBuilding")?.GetValue(__instance) as Building;
+                    Quaternion baseRot = mainBld != null ? mainBld.transform.rotation : Quaternion.identity;
+
+                    string payload = "||BPV[";
                     for (int i = 0; i < curBlueprint.splits.Count; i++) {
                         var bpSplit = curBlueprint.splits[i];
-                        int targetBpTrailIdx = -1;
+                        Vector3 localDir = Vector3.zero;
                         if (bpSplit.split != null) {
                             var divIField = AccessTools.Field(typeof(Split), "dividerI");
                             if (divIField != null) {
@@ -134,21 +151,18 @@ namespace ColonySpireMod
                                 if (dividerTrailsList != null && divI >= 0 && divI < dividerTrailsList.Count) {
                                     Trail targetNativeTrail = dividerTrailsList[divI];
                                     if (targetNativeTrail != null) {
-                                        for(int t = 0; t < curBlueprint.trails.Count; t++) {
-                                            if (curBlueprint.trails[t].trail == targetNativeTrail) {
-                                                targetBpTrailIdx = t;
-                                                break;
-                                            }
-                                        }
+                                        Vector3 absP = (targetNativeTrail.splitEnd != null ? targetNativeTrail.splitEnd.transform.position : targetNativeTrail.transform.position + targetNativeTrail.direction);
+                                        Vector3 worldDir = (absP - bpSplit.split.transform.position).normalized;
+                                        localDir = Quaternion.Inverse(baseRot) * worldDir;
                                     }
                                 }
                             }
                         }
-                        payload += targetBpTrailIdx + ",";
+                        payload += localDir.x.ToString("F3") + ":" + localDir.z.ToString("F3") + ",";
                     }
                     curBlueprint.description += payload + "]";
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.LogError("BlueprintSave Error: " + ex); }
         }
     }
 
@@ -159,47 +173,58 @@ namespace ColonySpireMod
             try {
                 var curBlueprintField = AccessTools.Field(typeof(BuildingEditing), "curBlueprint");
                 var curBlueprint = curBlueprintField?.GetValue(__instance) as Blueprint;
-                if (curBlueprint == null || curBlueprint.splits == null || curBlueprint.trails == null) return;
+                if (curBlueprint == null || curBlueprint.splits == null) return;
                 
                 var buildModeField = AccessTools.Field(typeof(BuildingEditing), "buildMode");
                 var buildMode = (BuildMode)buildModeField.GetValue(__instance);
                 if (buildMode != BuildMode.PlaceBlueprint) return;
 
-                List<int> decodedIds = new List<int>();
-                if (curBlueprint.description != null && curBlueprint.description.Contains("||BPI[")) {
-                    int start = curBlueprint.description.IndexOf("||BPI[") + 6;
+                List<Vector3> decodedDirs = new List<Vector3>();
+                if (curBlueprint.description != null && curBlueprint.description.Contains("||BPV[")) {
+                    int start = curBlueprint.description.IndexOf("||BPV[") + 6;
                     int end = curBlueprint.description.IndexOf("]", start);
                     if (end > start) {
                         string raw = curBlueprint.description.Substring(start, end - start);
                         foreach(var r in raw.Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries)) {
-                            if (int.TryParse(r, out int v)) decodedIds.Add(v);
+                            var pts = r.Split(':');
+                            if (pts.Length == 2 && float.TryParse(pts[0], out float x) && float.TryParse(pts[1], out float z)) {
+                                decodedDirs.Add(new Vector3(x, 0, z));
+                            } else {
+                                decodedDirs.Add(Vector3.zero);
+                            }
                         }
                     }
                 }
 
+                var mainBld = AccessTools.Field(typeof(BuildingEditing), "mainBuilding")?.GetValue(__instance) as Building;
+                Quaternion placeRot = mainBld != null ? mainBld.transform.rotation : Quaternion.identity;
+
                 for (int i = 0; i < curBlueprint.splits.Count; i++) {
                     var spawnedSplit = curBlueprint.splits[i].split;
-                    if (spawnedSplit != null && i < decodedIds.Count) {
-                        int targetIdx = decodedIds[i];
-                        if (targetIdx >= 0 && targetIdx < curBlueprint.trails.Count) {
-                            Trail spawnedTargetTrail = curBlueprint.trails[targetIdx].trail;
-                            if (spawnedTargetTrail != null) {
-                                var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
-                                if (trails != null) {
-                                    for(int t=0; t<trails.Count; t++) {
-                                        if (trails[t] == spawnedTargetTrail) {
-                                            AccessTools.Field(typeof(Split), "dividerI").SetValue(spawnedSplit, t);
-                                            break;
-                                        }
+                    if (spawnedSplit != null && i < decodedDirs.Count) {
+                        Vector3 targetWorldDir = placeRot * decodedDirs[i];
+                        if (targetWorldDir.sqrMagnitude > 0.1f) {
+                            var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
+                            if (trails != null && trails.Count > 0) {
+                                int bestIdx = 0;
+                                float bestAngle = float.MaxValue;
+                                for(int t=0; t<trails.Count; t++) {
+                                    Vector3 absP = (trails[t].splitEnd != null ? trails[t].splitEnd.transform.position : trails[t].transform.position + trails[t].direction);
+                                    Vector3 candWorldDir = (absP - spawnedSplit.transform.position).normalized;
+                                    float diff = Vector3.Angle(targetWorldDir, candWorldDir);
+                                    if (diff < bestAngle) {
+                                        bestAngle = diff;
+                                        bestIdx = t;
                                     }
                                 }
+                                AccessTools.Field(typeof(Split), "dividerI").SetValue(spawnedSplit, bestIdx);
                                 var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
                                 pointerUpdate?.Invoke(spawnedSplit, new object[] { false });
                             }
                         }
                     }
                 }
-            } catch (Exception ex) { Debug.LogError($"[Spire/BlueprintState] PlaceBuildings fix failed: {ex.Message}"); }
+            } catch (Exception ex) { Debug.LogError($"[Spire/BlueprintState] PlaceBuildings vector fix failed: {ex.Message}"); }
         }
     }
 
