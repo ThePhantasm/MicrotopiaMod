@@ -196,12 +196,12 @@ namespace ColonySpireMod
         }
     }
 
-    [HarmonyPatch(typeof(BuildingEditing), "CreateBlueprint")]
+    [HarmonyPatch(typeof(BlueprintManager), "CreateBlueprint")]
     public static class BlueprintCreatePatch {
         [HarmonyPostfix]
-        static void Postfix(BuildingEditing __instance) {
+        static void Postfix(Blueprint __result) {
             try {
-                var curBlueprint = AccessTools.Field(typeof(BuildingEditing), "curBlueprint")?.GetValue(__instance) as Blueprint;
+                var curBlueprint = __result;
                 if (curBlueprint != null && curBlueprint.splits != null && curBlueprint.trails != null) {
                     // ||SPL[splitId1=targetLaneId1,splitId2=targetLaneId2]
                     string splitPayload = "||SPL[";
@@ -210,7 +210,7 @@ namespace ColonySpireMod
                         if (bpSplit.split != null) {
                             long targetId = ModState.GetDividerTargetLane(bpSplit.split);
                             if (targetId > 0) {
-                                splitPayload += $"{bpSplit.split.linkId}={targetId},";
+                                splitPayload += $"{i}={targetId},";
                             }
                         }
                     }
@@ -220,9 +220,9 @@ namespace ColonySpireMod
                     string trailPayload = "||TRL[";
                     for(int t=0; t<curBlueprint.trails.Count; t++) {
                         var bpTrail = curBlueprint.trails[t];
-                        Split sourceStartSplit = GameManager.instance.FindLink<Split>(bpTrail.splitIdStart);
-                        Split sourceEndSplit = GameManager.instance.FindLink<Split>(bpTrail.splitIdEnd);
-                        if (sourceStartSplit != null) {
+                        Split sourceStartSplit = curBlueprint.splits[bpTrail.splitIdStart]?.split;
+                        Split sourceEndSplit = curBlueprint.splits[bpTrail.splitIdEnd]?.split;
+                        if (sourceStartSplit != null && sourceEndSplit != null) {
                             foreach(var nt in sourceStartSplit.connectedTrails) {
                                 if (nt.splitEnd == sourceEndSplit) {
                                     long laneId = DividerLaneTracker.GetOrMintLaneId(nt);
