@@ -32,68 +32,9 @@ namespace ColonySpireMod
     // LoadLinkSplits→PlaceTrail→UpdateDividerTrails(during_load=true).
     // So we do the linkId translation HERE, right after the list is built
     // and sorted, when dividerTrails is actually populated.
-    [HarmonyPatch(typeof(Split), "UpdateDividerTrails")]
-    public static class DividerSortFixPatch {
-        [HarmonyPostfix]
-        static void Postfix(Split __instance, bool during_load) {
-            try {
-                var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
-                var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
-                if (dividerTrailsField == null || dividerIField == null) return;
-                var dividerTrails = dividerTrailsField.GetValue(__instance) as List<Trail>;
-                if (dividerTrails == null || dividerTrails.Count <= 0) return;
-
-                // Step 1: Re-sort using a stable geometric anchor to preserve
-                // blueprint rotation while fixing save/load non-determinism.
-                // Because blueprint save logic iterates HashSet, the construction order
-                // and linkIds are entirely scrambled in copies-of-copies. 
-                // We find the path following the largest angular gap and use it as Anchor.
-                if (dividerTrails.Count > 1) {
-                    var angles = new List<KeyValuePair<Trail, float>>();
-                    foreach (var t in dividerTrails) {
-                        float angle = CalculateClockAngle(Vector3.forward, t.direction);
-                        angles.Add(new KeyValuePair<Trail, float>(t, angle));
-                    }
-                    
-                    // Sort by absolute clock angle ascending
-                    angles.Sort((a, b) => a.Value.CompareTo(b.Value));
-                    
-                    // Find the largest angular gap
-                    float maxGap = -1f;
-                    Trail refTrail = angles[0].Key; // Fallback
-                    
-                    for (int i = 0; i < angles.Count; i++) {
-                        var current = angles[i];
-                        var next = angles[(i + 1) % angles.Count];
-                        
-                        float gap = next.Value - current.Value;
-                        if (gap < 0) gap += 360f; // Wrap around
-                        
-                        // Tie breaker included for minor floating point inaccuracies
-                        if (gap > maxGap + 0.001f) {
-                            maxGap = gap;
-                            refTrail = next.Key; // The trail clockwise AFTER the gap
-                        }
-                    }
-
-                    Vector3 refDir = refTrail.direction;
-                    dividerTrails.Sort((Trail a, Trail b) => {
-                        float angleA = CalculateClockAngle(refDir, a.direction);
-                        float angleB = CalculateClockAngle(refDir, b.direction);
-                        return angleA.CompareTo(angleB);
-                    });
-                }
-            } catch (Exception ex) {
-                Debug.LogError($"[Spire/DividerFix] Sort/load fix failed: {ex.Message}");
-            }
-        }
-
-        static float CalculateClockAngle(Vector3 dir1, Vector3 dir2) {
-            float angle = Vector3.Angle(dir1, dir2);
-            if (Vector3.Cross(dir1, dir2).y >= 0f) return angle;
-            return 360f - angle;
-        }
-    }
+    // Removed DividerSortFixPatch entirely.
+    // Vanilla array population natively preserves order via sequential deserialization inside HashSet slots,
+    // so sorting it manually violently decoupled the raw physical rotational mappings.
 
     // Part B: REMOVED.
     // We used to translate dividerI to linkId + 100000 here, but doing so modifying
@@ -171,6 +112,123 @@ namespace ColonySpireMod
 
             } catch { }
             return true; // let original run (now with safe and gate-bypassed dividerI)
+        }
+    }
+
+    // ================================================================
+    // FLAAAWLESS DIVIDER FIX: Local-Rotation Invariant Sorting + Primative Array Tracking
+    // ================================================================
+    public static class BlueprintState {
+        public static Dictionary<int, int> dividerIbySplitIndex = new Dictionary<int, int>();
+    }
+
+    [HarmonyPatch(typeof(Blueprint), MethodType.Constructor, new Type[] { typeof(Building), typeof(Vector3) })]
+    public static class BlueprintCtorPatch {
+        [HarmonyPostfix]
+        static void Postfix() {
+            BlueprintState.dividerIbySplitIndex.Clear();
+        }
+    }
+
+    [HarmonyPatch(typeof(Blueprint), "AddSplit", new Type[] { typeof(Split) })]
+    public static class BlueprintAddSplitPatch {
+        [HarmonyPostfix]
+        static void Postfix(int __result, Split split) {
+            try {
+                if (split != null) {
+                    var divField = AccessTools.Field(typeof(Split), "dividerI");
+                    if (divField != null) BlueprintState.dividerIbySplitIndex[__result] = (int)divField.GetValue(split);
+                }
+            } catch { }
+        }
+    }
+
+    [HarmonyPatch(typeof(BuildingEditing), "PlaceBuildings")]
+    public static class BlueprintPlaceBuildingsPatch {
+        [HarmonyPostfix]
+        static void Postfix(BuildingEditing __instance) {
+            try {
+                var buildModeField = AccessTools.Field(typeof(BuildingEditing), "buildMode");
+                var builderBlueprintField = AccessTools.Field(typeof(BuildingEditing), "curBlueprint");
+                if (buildModeField == null || builderBlueprintField == null) return;
+                
+                var buildMode = (BuildMode)buildModeField.GetValue(__instance);
+                if (buildMode != BuildMode.PlaceBlueprint) return;
+                
+                var curBlueprint = builderBlueprintField.GetValue(__instance) as Blueprint;
+                if (curBlueprint == null || curBlueprint.splits == null) return;
+                
+                var dividerIField = AccessTools.Field(typeof(Split), "dividerI");
+                if (dividerIField == null) return;
+
+                // Simple 1-to-1 array map! Works no matter how many times the blueprint objects are cloned in memory!
+                for (int i = 0; i < curBlueprint.splits.Count; i++) {
+                    if (BlueprintState.dividerIbySplitIndex.TryGetValue(i, out int targetI)) {
+                        var spawnedSplit = curBlueprint.splits[i].split;
+                        if (spawnedSplit != null) {
+                            var trails = AccessTools.Field(typeof(Split), "dividerTrails").GetValue(spawnedSplit) as List<Trail>;
+                            if (trails != null && trails.Count > 0) {
+                                targetI = Math.Max(0, Math.Min(targetI, trails.Count - 1));
+                            } else targetI = 0;
+
+                            dividerIField.SetValue(spawnedSplit, targetI);
+                            var pointerUpdate = AccessTools.Method(typeof(Split), "UpdatePointer");
+                            if (pointerUpdate != null) pointerUpdate.Invoke(spawnedSplit, new object[] { false });
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire/BlueprintState] PlaceBuildings fix failed: {ex.Message}");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Split), "UpdateDividerTrails")]
+    public static class DividerSortFixPatch {
+        [HarmonyPostfix]
+        static void Postfix(Split __instance) {
+            try {
+                var dividerTrailsField = AccessTools.Field(typeof(Split), "dividerTrails");
+                var dividerTrails = dividerTrailsField?.GetValue(__instance) as List<Trail>;
+                if (dividerTrails == null || dividerTrails.Count <= 1) return;
+
+                // Pick the trail with the LOWEST linkId as the local reference "Forward".
+                // Since pasted blueprints spawn trails sequentially, the lowest linkId trail 
+                // in the pasted hub perfectly matches the lowest linkId in the original hub!
+                // This means 'refDir' rotates LOCALLY with the blueprint natively!
+                Trail refTrail = dividerTrails[0];
+                foreach (var t in dividerTrails) {
+                    if (t.linkId != 0 && (refTrail.linkId == 0 || t.linkId < refTrail.linkId)) refTrail = t;
+                }
+
+                Vector3 getDir(Trail t) {
+                    Vector3 pS = t.splitStart != null ? t.splitStart.transform.position : t.transform.position;
+                    Vector3 pE = t.splitEnd != null ? t.splitEnd.transform.position : t.transform.position + t.transform.forward;
+                    return (pE - pS).normalized;
+                }
+
+                Vector3 refDir = getDir(refTrail);
+                refDir.y = 0f;
+
+                float GetLocalClock(Vector3 dir) {
+                    dir.y = 0f;
+                    float angle = Vector3.Angle(refDir, dir);
+                    if (Vector3.Cross(refDir, dir).y < 0f) angle = 360f - angle; // Right-handed check
+                    return angle;
+                }
+
+                dividerTrails.Sort((Trail a, Trail b) => {
+                    float angleA = GetLocalClock(getDir(a));
+                    float angleB = GetLocalClock(getDir(b));
+                    if (Mathf.Abs(angleA - angleB) > 0.001f) return angleA.CompareTo(angleB);
+                    
+                    float lenA = Vector3.Distance(a.splitStart != null ? a.splitStart.transform.position : a.transform.position, a.splitEnd != null ? a.splitEnd.transform.position : a.transform.position + a.transform.forward);
+                    float lenB = Vector3.Distance(b.splitStart != null ? b.splitStart.transform.position : b.transform.position, b.splitEnd != null ? b.splitEnd.transform.position : b.transform.position + b.transform.forward);
+                    return lenA.CompareTo(lenB);
+                });
+            } catch (Exception ex) {
+                Debug.LogError($"[Spire/DividerFix] Sort fix failed: {ex.Message}");
+            }
         }
     }
 
