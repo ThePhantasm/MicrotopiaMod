@@ -123,7 +123,9 @@ namespace ColonySpireMod
             if (ModState.enableDividerFix) {
                 Logger.LogInfo("[Improvement] Divider Save Fix: ENABLED");
                 patchClasses.AddRange(new[] {
-                    typeof(DividerSortFixPatch),
+                    typeof(AbsoluteCompassSortPatch),
+                    typeof(BlueprintCreatePatch),
+                    typeof(BlueprintPlaceBuildingsPatch),
                     typeof(DividerLoadFixPatch),
                     typeof(DividerChooseSafetyPatch),
                     typeof(CounterGateLoadLeakFixPatch),
