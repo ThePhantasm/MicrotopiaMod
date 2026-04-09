@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace ColonySpireMod
 {
-    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.11")]
+    [BepInPlugin("com.colonyspire.mod", "Colony Spire Mod", "1.1.20")]
     public class ColonySpirePlugin : BaseUnityPlugin
     {
         public static BepInEx.Logging.ManualLogSource Log;
@@ -131,6 +131,8 @@ namespace ColonySpireMod
                     typeof(BlueprintCreatePatch),
                     typeof(BlueprintPlaceBuildingsPatch),
                     typeof(CounterGateLoadLeakFixPatch),
+                    typeof(AntMayDieForkSafetyPatch),
+                    typeof(LifeGateMaximumIncreasePatch),
                 });
             } else {
                 Logger.LogInfo("[Improvement] Divider Save Fix: DISABLED");
