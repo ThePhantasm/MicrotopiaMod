@@ -1103,13 +1103,14 @@ namespace ColonySpireMod
                     
                     // If the trail is incredibly short (like a clustered bulb gate), disable graph node safety.
                     // This prevents extremely fast ants from skipping the kill zone in a single physics frame and becoming immortal.
-                    if (length < 2.0f) return;
+                    // Increased from 2.0 to 10.0 because Life Gate/Life Pod workers get stuck on loop-backs.
+                    if (length < 10.0f) return;
 
                     float distToEnd = (1f - __instance.trailProgress) * length;
                     float distToStart = __instance.trailProgress * length;
 
-                    // Block death if the ant is within 1.5 units (or 15%) of the intersection node to prevent spawn clipping.
-                    float safeDist = Mathf.Min(1.5f, length * 0.15f);
+                    // Block death if the ant is within 1.0 units (or 10%) of the intersection node to prevent spawn clipping.
+                    float safeDist = Mathf.Min(1.0f, length * 0.10f);
 
                     if (distToEnd <= safeDist || distToStart <= safeDist) {
                         __result = false;
