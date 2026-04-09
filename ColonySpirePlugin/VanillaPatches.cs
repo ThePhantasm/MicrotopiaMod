@@ -1095,12 +1095,23 @@ namespace ColonySpireMod
         [HarmonyPostfix]
         static void Postfix(Ant __instance, ref bool __result) {
             try {
-                if (__result && __instance.currentTrail != null) {
-                    float distToEnd = (1f - __instance.trailProgress) * __instance.currentTrail.length;
-                    float distToStart = __instance.trailProgress * __instance.currentTrail.length;
+                // If Vanilla already blocked death (e.g. Ant is DYING, BORN, carried by something else, headless), respect it.
+                if (!__result) return;
+
+                if (__instance.currentTrail != null && __instance.currentTrail.trailType != TrailType.COMMAND) {
+                    float length = __instance.currentTrail.length;
                     
-                    float safeDist = Mathf.Min(1.5f, __instance.currentTrail.length * 0.45f);
-                    if ((distToEnd <= safeDist || distToStart <= safeDist) && __instance.currentTrail.trailType != TrailType.COMMAND) {
+                    // If the trail is incredibly short (like a clustered bulb gate), disable graph node safety.
+                    // This prevents extremely fast ants from skipping the kill zone in a single physics frame and becoming immortal.
+                    if (length < 2.0f) return;
+
+                    float distToEnd = (1f - __instance.trailProgress) * length;
+                    float distToStart = __instance.trailProgress * length;
+
+                    // Block death if the ant is within 1.5 units (or 15%) of the intersection node to prevent spawn clipping.
+                    float safeDist = Mathf.Min(1.5f, length * 0.15f);
+
+                    if (distToEnd <= safeDist || distToStart <= safeDist) {
                         __result = false;
                     }
                 }
